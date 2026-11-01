@@ -35,13 +35,12 @@ def get_all():
     return all_m
 
 def team_name(m):
-    # Use yes_sub_title first
-    y=m.get("yes_sub_title","") or ""
-    t=m.get("title","") or ""
-    s=m.get("subtitle","") or ""
-    raw=(y+" "+t+" "+s).lower()
-    if "【entity-cruz azul¦canonical_name=Cruz Azul】" in raw:
-        return "【entity-Cruz Azul¦canonical_name=Cruz Azul】"
+    y=(m.get("yes_sub_title","") or "").lower()
+    t=(m.get("title","") or "").lower()
+    s=(m.get("subtitle","") or "").lower()
+    raw=y+" "+t+" "+s
+    if "cruz azul" in raw:
+        return "CruzAzul"
     if "tijuana" in raw:
         return "Tijuana"
     if "quilmes" in raw:
@@ -55,23 +54,18 @@ def team_name(m):
     if "nashville" in raw:
         return "Nashville"
     if "los angeles" in raw and "miami" in raw:
-        return "LAFC vs Miami"
-    if "【entity-palmeiras¦canonical_name=Palmeiras】" in raw:
-        return "【entity-Palmeiras¦canonical_name=Palmeiras】"
+        return "LAFCvsMIA"
+    if "palmeiras" in raw:
+        return "Palmeiras"
     if "gremio" in raw:
         return "Gremio"
     if "miami" in raw:
-        return "【entity-Inter Miami¦canonical_name=Inter Miami】"
-    # fallback: take yes_sub before Over
-    if "over" in y.lower():
-        base=y.split("Over")[0].split("over")[0].strip()[:20]
-        if len(base)>=3 and "KX" not in base.upper():
-            return base
+        return "MiamiTeam"
     return ""
 
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V51 {now}")
+    print(f"V52 {now}")
     try:
         markets=get_all()
         soccer=[]
@@ -81,9 +75,8 @@ def analyze():
             ev=(m.get("event_ticker","") or "").upper()
             title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
             tl=title.lower()
-            # Soccer filter - V49 51 clean
             if "SOCCER" not in series and "SOCCER" not in ev:
-                if not any(x in tl for x in ["【entity-cruz azul¦canonical_name=Cruz Azul】","tijuana","quilmes","lanus","vancouver","seattle","nashville","【entity-palmeiras¦canonical_name=Palmeiras】","gremio","miami","mls"]):
+                if not any(x in tl for x in ["cruz azul","tijuana","quilmes","lanus","vancouver","seattle","nashville","palmeiras","gremio","miami","mls"]):
                     continue
             if "both teams to score" in tl:
                 continue
@@ -117,7 +110,7 @@ def analyze():
             except:
                 pass
             team=team_name(m)
-            if not team or "CROSS" in team.upper() or "KX" in team.upper():
+            if not team:
                 continue
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
             soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":ev,"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
@@ -125,7 +118,7 @@ def analyze():
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V51 FINAL CLEAN 51 Soccer Team 100% - Total {len(markets)} Soccer {len(soccer)}")
+            send(f"V52 FINAL No Tag Live - Total {len(markets)} Soccer {len(soccer)} Clean")
 
         if soccer:
             by_team={}
@@ -146,15 +139,15 @@ def analyze():
 
             middles=middles[:5]
             if middles:
-                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer Clean - {len(middles)} Middle\n(ပွဲပြီးတာ မပါ, လက်ရှိ+နောက်လာမယ့်)\n\n"
+                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer Clean - {len(middles)} Middle\n\n"
                 for i,(a,b) in enumerate(middles,1):
-                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win 65%+ | Pre 2 side buy - 15' 0-0 Under add - 70' Jackpot Over\n\n"
+                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win | Pre buy - 15' Under add - 70' Jackpot Over\n\n"
                 send(msg)
             else:
                 top=soccer[:5]
-                msg=f"PRE-MATCH {now} - {len(soccer)} Soccer Clean - Middle waiting\n"
+                msg=f"PRE-MATCH {now} - {len(soccer)} Soccer - Middle waiting\n"
                 for s in top:
-                    msg+=f"{s['team']} {s['clean']} {s['over']}c Exp {s['exp']}\n"
+                    msg+=f"{s['team']} {s['clean']} {s['over']}c\n"
                 send(msg)
 
     except Exception as e:
@@ -162,7 +155,7 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V51 starting")
+    send("V52 starting")
     while True:
         try:
             analyze()
@@ -175,7 +168,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V51 running")
+        self.wfile.write(b"V52 running")
     def log_message(self,*a):
         pass
 
