@@ -1,4 +1,4 @@
-import os, time, requests, threading, re
+import os, time, requests, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
@@ -34,31 +34,18 @@ def get_all():
             break
     return all_m
 
-def clean_team(raw, ev):
-    t=raw or ""
-    t=re.sub(r"^(yes|no)\s+", "", t, flags=re.I)
-    t=t.split("Over")[0]
-    t=t.split("Both Teams")[0]
-    t=t.replace(",","").strip()[:40]
-    if "CROSSCATEGORY" in t.upper() or len(t) < 5 or t.upper().startswith("KX"):
-        if ev and "-" in ev:
-            parts=ev.split("-")
-            if len(parts) >= 2:
-                return f"{parts[-2]} vs {parts[-1]}"[:30]
-        return ev[:25] if ev else "Soccer"
-    return t
-
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V44 {now}")
+    print(f"V45 {now}")
     try:
         markets=get_all()
         soccer=[]
         now_utc=datetime.now(timezone.utc)
         for m in markets:
-            title_raw=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
-            tl=title_raw.lower()
-            if "croscategory" in tl or "crosscategory" in tl:
+            title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
+            tl=title.lower()
+            # Filter - only 2 new lines
+            if "crosscategory" in tl:
                 continue
             if "both teams to score" in tl:
                 continue
@@ -80,7 +67,7 @@ def analyze():
                     except:
                         continue
             if ya is None:
-                ya=50  # Fallback - Vol 0 markets
+                ya=50
             if not (5 <= ya <= 95):
                 continue
             exp=m.get("expiration_time","")
@@ -91,15 +78,17 @@ def analyze():
                         continue
             except:
                 pass
-            ev=m.get("event_ticker","")
-            team=clean_team(m.get("title","") or m.get("yes_sub_title",""), ev)
+            team=m.get("title","") or m.get("yes_sub_title","")
+            team=team.replace("yes","").replace("no","").split("Over")[0].replace(",","").strip()[:35]
+            if len(team) < 3:
+                team=m.get("event_ticker","")[:20]
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":ev,"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
+            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":m.get("event_ticker",""),"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
 
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V44 FINAL CLEAN Live - BTTS/Cross ဖျက် + 50c fallback - Total {len(markets)} Soccer {len(soccer)}")
+            send(f"V45 FINAL CLEAN Live - BTTS+Cross ဖျက် - Total {len(markets)} Soccer {len(soccer)}")
 
         if soccer:
             by_ev={}
@@ -120,13 +109,13 @@ def analyze():
             if middles:
                 msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer Clean - {len(middles)} Middle\n(ပွဲပြီးတာ မပါ, လက်ရှိ+နောက်လာမယ့်)\n\n"
                 for i,(a,b) in enumerate(middles,1):
-                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win Win 65%+ | Pre 2 side buy - 15' 0-0 Under add - 70' Jackpot Over\n\n"
+                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win 65%+\n\n"
                 send(msg)
             else:
                 top=soccer[:5]
-                msg=f"PRE-MATCH {now} - {len(soccer)} Soccer Clean - Middle waiting\n"
+                msg=f"PRE-MATCH {now} - {len(soccer)} Soccer Clean\n"
                 for s in top:
-                    msg+=f"{s['team']} {s['clean']} {s['over']}c Exp {s['exp']}\n"
+                    msg+=f"{s['team']} {s['clean']} {s['over']}c\n"
                 send(msg)
 
     except Exception as e:
@@ -134,7 +123,7 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V44 starting")
+    send("V45 starting")
     while True:
         try:
             analyze()
@@ -147,8 +136,9 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V44 running")
+        self.wfile.write(b"V45 running")
     def log_message(self,*a):
         pass
 
-threading.Thread(target=bot
+threading.Thread(target=bot_loop, daemon=True).start()
+HTTPServer(("0.0.0.0", int(os.getenv("PORT","10000"))), H).serve_forever()
