@@ -10,90 +10,90 @@ def send(msg):
     try:
         r=requests.post(f"https://api.telegram.org/bot{BOT}/sendMessage", data={"chat_id":CHAT,"text":msg}, timeout=20)
         print(f"TG {r.status_code}")
-    except Exception as e: print(f"TG err {e}")
+    except: pass
 
-def get_soccer_markets():
-    all_m=[]
-    series_list=["SOCCERMLS","SOCCER","SOCCEREPL","SOCCERLALIGA","SOCCERBUNDES","SOCCERSERIEA","SOCCERUCL"]
-    for series in series_list:
-        cur=None
-        for _ in range(3):
-            try:
-                p={"status":"open","limit":200,"series_ticker":series}
-                if cur: p["cursor"]=cur
-                r=requests.get(f"{BASE}/markets", params=p, timeout=20)
-                if r.status_code!=200: break
-                data=r.json(); ms=data.get("markets",[]); all_m.extend(ms)
-                print(f"Series {series}: {len(ms)} markets")
-                for mm in ms[:2]:
-                    print(f"  RAW SAMPLE: title={mm.get('title','')} ticker={mm.get('ticker','')} yes_bid={mm.get('yes_bid')} yes_ask={mm.get('yes_ask')} last={mm.get('last_price')} vol={mm.get('volume')}")
-                cur=data.get("cursor")
-                if not cur or len(ms)<200: break
-            except Exception as e:
-                print(f"Err {series} {e}"); break
+def get_all():
+    all_m=[]; cur=None
+    for i in range(20): # 20*250 = 5000 markets
+        try:
+            p={"status":"open","limit":250}
+            if cur: p["cursor"]=cur
+            r=requests.get(f"{BASE}/markets", params=p, timeout=25)
+            print(f"Fetch {i} status {r.status_code} count {len(r.json().get('markets',[])) if r.status_code==200 else 0}")
+            if r.status_code!=200:
+                print(f"Body {r.text[:200]}")
+                time.sleep(2); continue
+            data=r.json(); ms=data.get("markets",[]); 
+            all_m.extend(ms)
+            cur=data.get("cursor")
+            if not cur: break
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"Fetch err {e}"); time.sleep(2)
     return all_m
-
-def is_upcoming(m):
-    if m.get("status","").lower() in ["settled","closed","expired"]: return False
-    return True
 
 def analyze():
     now=datetime.now().strftime("%H:%M:%S")
-    print(f"\n=== V27 {now} ===")
-    markets=get_soccer_markets()
-    print(f"Total fetched: {len(markets)}")
+    print(f"\n=== V28 {now} ===")
+    markets=get_all()
+    print(f"Total fetched {len(markets)}")
     soccer=[]
-    raw_samples=[]
+    samples=[]
     for m in markets:
-        if not is_upcoming(m): continue
-        title=(m.get("title","")+" "+m.get("subtitle","")).lower()
-        # ပိုကျယ်အောင်: over ပါရင် အကုန် ယူ - goal မပါလဲ Point Total ဆို ယူ
-        if "over" not in title and "point total" not in title: continue
-        # yes price ကို အကုန်စစ်
-        ya=m.get("yes_ask") or m.get("yes_bid") or m.get("last_price") or m.get("price") or 0
-        try: ya=int(ya)
-        except: 
-            try: ya=int(float(ya))
-            except: continue
-        if ya==0: ya=m.get("yes_bid") or 0
-        try: ya=int(ya)
-        except: continue
+        ev=(m.get("event_ticker","")+" "+m.get("series_ticker","")+" "+m.get("ticker","")).upper()
+        title=m.get("title","") or ""
+        # Soccer event_ticker has SOCCER
+        if "SOCCER" not in ev: continue
+        # Point Total or Over
+        if "OVER" not in title.upper() and "POINT TOTAL" not in title.upper() and "TOTAL" not in (m.get("subtitle","").upper()):
+            # Still keep for debug
+            if len(samples)<5:
+                samples.append(f"{title[:50]} ev={ev}")
+            continue
+        # Price - check all fields
+        ya=None
+        for k in ["yes_ask","yes_bid","last_price","price","yes_price"]:
+            v=m.get(k)
+            if v is not None:
+                try:
+                    ya=int(v)
+                    break
+                except:
+                    try: ya=int(float(v)); break
+                    except: continue
+        if ya is None: continue
         if 1<=ya<=99:
-            soccer.append({"over":ya,"under":100-ya,"title":m.get("title",""),"ticker":m.get("ticker",""),"ev":m.get("event_ticker",""),"vol":m.get("volume",0),"series":m.get("series_ticker",""),"raw_yes":m.get("yes_ask")})
-        else:
-            raw_samples.append(f"{title[:50]} ya={ya}")
+            soccer.append({"over":ya,"under":100-ya,"title":title,"ticker":m.get("ticker",""),"ev":m.get("event_ticker",""),"vol":m.get("volume",0),"series":m.get("series_ticker","")})
+            print(f" KEEP {ya}c {title[:60]} ev={ev}")
 
-    print(f"Point Total Over filtered: {len(soccer)}")
-    for s in soccer[:10]:
-        print(f"  KEEP {s['over']}c {s['title'][:60]}")
+    print(f"Soccer Point Total {len(soccer)} samples {samples}")
 
     if not hasattr(analyze,"first"):
         analyze.first=True
-        send(f"✅ V27 FINAL - Filter fix - 20 တွေ့ပြီးပြီ - Point Total Over ရှာနေတယ်")
+        send(f"✅ V28 FINAL - Full 5000 scan - SOCCER event_ticker filter - Vancouver 43% ရှာမယ်")
 
     if soccer:
-        # Top by balanced
-        top=sorted(soccer, key=lambda x: abs(x["over"]-50))[:5]
-        msg=f"🔥 PRE-MATCH MIDDLE {now} - {len(soccer)} Point Total (ပွဲပြီးတာ မပါ)\n\nVancouver vs Seattle လို ပွဲတွေ တွေ့ပြီ!\n\n"
+        top=sorted(soccer, key=lambda x: abs(x["over"]-43))[:5] # 43% is sweet spot like screenshot
+        msg=f"🔥 PRE-MATCH MIDDLE {now} - {len(soccer)} Point Total Over (ပွဲပြီးတာ မပါ, လက်ရှိ+နောက်လာမယ့်)\n\n"
         for i,s in enumerate(top,1):
-            msg+=f"{i}. {s['title'][:55]}\n   Over {s['over']}c Under {s['under']}c Vol {s['vol']}\n"
+            msg+=f"{i}. {s['title'][:55]}\n   {s['series']} {s['ev'][-20:]} Over {s['over']}c Under {s['under']}c Vol {s['vol']}\n"
             if 35<=s["over"]<=60:
-                msg+=f"   💡 Middle: Over 2.5 60c + Under 3.5 {s['under']}c = 3 ဂိုးဆို 2 ဖက်နိုင်! Win% 65%+\n"
-                msg+=f"   ပွဲမစခင် ဝယ် - 15' 0-0 ဆို Under ထပ်ဝယ် - 70' Jackpot!\n"
+                msg+=f"   💡 Middle အကွက်: Over 2.5 60c + Under 3.5 {s['under']}c = 3 ဂိုးဆို 2 ဖက်နိုင်! Win% 65%+\n"
+                msg+=f"   ပွဲမစခင် ဝယ်ထား - 15' 0-0 ဆို Under ထပ်ဝယ် - 70' Jackpot!\n"
             msg+="\n"
         send(msg)
     else:
-        sample_txt="\n".join(raw_samples[:5]) if raw_samples else "no raw"
-        send(f"Status {now} - Soccer {len(markets)} တွေ့တယ်, Over filter {len(soccer)} - Raw samples:\n{sample_txt[:800]}\n\nFilter ဖြေနေတယ်")
+        s_txt="\n".join(samples[:3]) if samples else "No soccer samples"
+        send(f"Status {now} - Total {len(markets)} markets, Soccer Point Total {len(soccer)}\nSamples:\n{s_txt}\n\nFull scan {len(markets)} - Filter ထပ်ပြင်မယ်")
 
 def bot_loop():
     time.sleep(3)
     while True:
         try: analyze(); time.sleep(180)
-        except Exception as e: print(e); send(f"Err {e}"); time.sleep(60)
+        except Exception as e: print(e); time.sleep(60)
 
 class H(BaseHTTPRequestHandler):
-    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"V27 running")
+    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"V28 running")
     def log_message(self,*a): pass
 
 threading.Thread(target=bot_loop, daemon=True).start()
