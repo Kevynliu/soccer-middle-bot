@@ -1,17 +1,19 @@
-import os, requests, threading
+import os, requests, threading, time
 from http.server import HTTPServer, BaseHTTPRequestHandler
-BOT_TOKEN=os.getenv("BOT_TOKEN") or os.getenv("Bot_TOKEN")
-CHAT_ID=os.getenv("CHAT_ID") or os.getenv("Chat_ID")
-def send(msg):
-    try: requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",params={"chat_id":CHAT_ID,"text":msg},timeout=10)
-    except: pass
-def bot_loop():
-    import time
+BOT=os.getenv("BOT_TOKEN","").strip()
+CHAT=os.getenv("CHAT_ID","").strip()
+print(f"DEBUG BOT_TOKEN len={len(BOT)} CHAT_ID={CHAT}")
+def send(m):
+    try:
+        r=requests.get(f"https://api.telegram.org/bot{BOT}/sendMessage",params={"chat_id":CHAT,"text":m},timeout=10)
+        print(f"TG response: {r.text[:200]}")
+    except Exception as e: print(f"TG error {e}")
+def loop():
     time.sleep(3)
-    send("✅ Bot LIVE - Deployed!")
+    send("✅ Bot LIVE - Test message")
     while True: time.sleep(300)
 class H(BaseHTTPRequestHandler):
-    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"Bot running")
-if __name__=="__main__":
-    threading.Thread(target=bot_loop,daemon=True).start()
-    HTTPServer(("0.0.0.0",int(os.getenv("PORT",10000))),H).serve_forever()
+    def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+    def do_HEAD(self): self.send_response(200); self.end_headers()
+threading.Thread(target=loop,daemon=True).start()
+HTTPServer(("0.0.0.0",int(os.getenv("PORT",10000))),H).serve_forever()
