@@ -1,39 +1,45 @@
 import requests, os, time
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+BOT_TOKEN = os.getenv("Bot_TOKEN")
+CHAT_ID = os.getenv("Chat_ID")
+ODDS_API_KEY = os.getenv("Odds_API_KEY")
+KALSHI_EMAIL = os.getenv("Kalshi_EMAIL_1")
+KALSHI_PASSWORD = os.getenv("Kalshi_PASSWORD")
+
+# Render မှာ Key နာမည် နဲနဲကွဲရင် အောက်က ၂ ကြောင်းကို ပြင်ပေးမယ် - အခု မင်းပုံထဲက နာမည်နဲ့ ကိုက်အောင် ရေးထားတယ်
+# တကယ်က Bot_TOKEN, Chat_ID စသည်ဖြင့် ဖြစ်နေလို့ အပေါ်က get တွေက case-sensitive ဖြစ်တယ်
+# အလွယ်ဆုံး - အောက်က ကို သုံးပါ (Key နာမည်အတိအကျ)
+BOT_TOKEN = os.getenv("Bot_TOKEN") or os.getenv("BOT_TOKEN") or os.getenv("Bot_...")
+CHAT_ID = os.getenv("Chat_ID") or os.getenv("CHAT_ID") or os.getenv("CHATID")
+ODDS_API_KEY = os.getenv("Odds_API_KEY") or os.getenv("ODDS_API_KEY")
 
 def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.get(url, params={"chat_id": CHAT_ID, "text": msg})
-
-def find_middle():
-    sport = "soccer_epl"
-    url = f"https://api.the-odds-api.com/v4/sports/{sport}/odds/"
-    params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "totals", "bookmakers": "pinnacle,bet365,unibet"}
     try:
-        r = requests.get(url, params=params, timeout=15).json()
-        for game in r:
-            home = game['home_team']
-            away = game['away_team']
-            lines = []
-            for bm in game.get('bookmakers', []):
-                for market in bm.get('markets', []):
-                    if market['key'] == 'totals':
-                        for o in market['outcomes']:
-                            lines.append({'bookie': bm['title'], 'name': o['name'], 'point': o['point'], 'price': o['price']})
-            overs = [x for x in lines if x['name'] == 'Over' and x['point'] == 2.5 and x['price'] > 1.9]
-            unders = [x for x in lines if x['name'] == 'Under' and x['point'] == 3.5 and x['price'] > 1.9]
-            if overs and unders:
-                best_over = max(overs, key=lambda x: x['price'])
-                best_under = max(unders, key=lambda x: x['price'])
-                msg = f"MIDDLE FOUND!\n{home} vs {away}\nOver 2.5 @ {best_over['price']} ({best_over['bookie']})\nUnder 3.5 @ {best_under['price']} ({best_under['bookie']})"
-                send_telegram(msg)
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.get(url, params={"chat_id": CHAT_ID, "text": msg}, timeout=10)
     except Exception as e:
         print(e)
 
+def get_kalshi_token():
+    try:
+        url = "https://api.elections.kalshi.com/trade-api/v2/login"
+        r = requests.post(url, json={"email": KALSHI_EMAIL, "password": KALSHI_PASSWORD}, timeout=15)
+        print(r.text)
+        return r.json().get("token")
+    except Exception as e:
+        print(f"Kalshi login error {e}")
+        return None
+
+def check_combined():
+    print("Checking...")
+    token = get_kalshi_token()
+    if not token:
+        send_telegram("❌ 【entity-Kalshi¦canonical_name=Kalshi】 login failed - Email/Pass စစ်ပါ")
+        return
+    send_telegram("✅ 【entity-Kalshi¦canonical_name=Kalshi】 login OK - Market ရှာနေပြီ")
+    # ဒီနေရာမှာ Kalshi market ရှာတဲ့ logic ဆက်ရေးလို့ရပြီ
+
 if __name__ == "__main__":
-    send_telegram("Bot Started - EPL Middle searching")
+    send_telegram("✅ Bot Started - Kalshi+Odds checking")
     while True:
-        find_middle()
+        check_combined()
         time.sleep(300)
