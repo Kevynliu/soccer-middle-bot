@@ -36,20 +36,27 @@ def get_all():
 
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V45 {now}")
+    print(f"V46 {now}")
     try:
         markets=get_all()
         soccer=[]
         now_utc=datetime.now(timezone.utc)
         for m in markets:
+            series=(m.get("series_ticker","") or "").upper()
+            ev=(m.get("event_ticker","") or "").upper()
             title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
             tl=title.lower()
-            # Filter - only 2 new lines
+            # Soccer only
+            if "SOCCER" not in series and "SOCCER" not in ev:
+                # fallback: if no SOCCER in series, skip unless mls/premier etc
+                if not any(x in tl for x in ["mls","premier","la liga","bundesliga","serie a","ligue","ucl","cruz azul","tijuana","vancouver","seattle","palmeiras","gremio","nashville"]):
+                    continue
+            # Filters
             if "crosscategory" in tl:
                 continue
             if "both teams to score" in tl:
                 continue
-            if "edmonton" in tl or "ottawa" in tl:
+            if "edmonton" in tl or "ottawa" in tl or "lendeborg" in tl or "austin reaves" in tl or "yaxel" in tl:
                 continue
             if "wins by more than" in tl:
                 continue
@@ -80,15 +87,15 @@ def analyze():
                 pass
             team=m.get("title","") or m.get("yes_sub_title","")
             team=team.replace("yes","").replace("no","").split("Over")[0].replace(",","").strip()[:35]
-            if len(team) < 3:
-                team=m.get("event_ticker","")[:20]
+            if len(team) < 3 or "KX" in team.upper():
+                team=ev[:20] if ev else "Soccer"
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":m.get("event_ticker",""),"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
+            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":ev,"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
 
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V45 FINAL CLEAN Live - BTTS+Cross ဖျက် - Total {len(markets)} Soccer {len(soccer)}")
+            send(f"V46 FINAL Soccer Only Live - Total {len(markets)} Soccer {len(soccer)} - Yaxel NBA ဖျက်")
 
         if soccer:
             by_ev={}
@@ -107,15 +114,15 @@ def analyze():
 
             middles=middles[:5]
             if middles:
-                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer Clean - {len(middles)} Middle\n(ပွဲပြီးတာ မပါ, လက်ရှိ+နောက်လာမယ့်)\n\n"
+                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer 2.5/3.5 - {len(middles)} Middle\n(ပွဲပြီးတာ မပါ, လက်ရှိ+နောက်လာမယ့်)\n\n"
                 for i,(a,b) in enumerate(middles,1):
-                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win 65%+\n\n"
+                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win 65%+ | Pre 2 side buy - 15' 0-0 Under add - 70' Jackpot Over\n\n"
                 send(msg)
             else:
                 top=soccer[:5]
                 msg=f"PRE-MATCH {now} - {len(soccer)} Soccer Clean\n"
                 for s in top:
-                    msg+=f"{s['team']} {s['clean']} {s['over']}c\n"
+                    msg+=f"{s['team']} {s['clean']} {s['over']}c Exp {s['exp']}\n"
                 send(msg)
 
     except Exception as e:
@@ -123,7 +130,7 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V45 starting")
+    send("V46 starting")
     while True:
         try:
             analyze()
@@ -136,7 +143,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V45 running")
+        self.wfile.write(b"V46 running")
     def log_message(self,*a):
         pass
 
