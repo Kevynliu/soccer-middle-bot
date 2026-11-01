@@ -1,6 +1,5 @@
-import os, time, requests, threading, re
+import os, time, requests, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime, timezone
 
 BOT=os.getenv("BOT_TOKEN","").strip()
 CHAT=os.getenv("CHAT_ID","").strip()
@@ -9,19 +8,22 @@ BASE="https://api.elections.kalshi.com/trade-api/v2"
 def send(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{BOT}/sendMessage", data={"chat_id":CHAT,"text":msg}, timeout=20)
-    except:
-        pass
+        print("sent")
+    except Exception as e:
+        print(f"send err {e}")
 
 def get_all():
     all_m=[]
     cur=None
-    for i in range(25):
+    for i in range(10):
         try:
             p={"status":"open","limit":400}
             if cur:
                 p["cursor"]=cur
-            r=requests.get(f"{BASE}/markets", params=p, timeout=25)
+            r=requests.get(f"{BASE}/markets", params=p, timeout=20)
+            print(f"fetch {i} {r.status_code}")
             if r.status_code!=200:
+                time.sleep(1)
                 continue
             data=r.json()
             ms=data.get("markets",[])
@@ -30,64 +32,57 @@ def get_all():
             if not cur:
                 break
             time.sleep(0.5)
-        except:
+        except Exception as e:
+            print(f"get err {e}")
             break
     return all_m
 
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V40 {now}")
-    markets=get_all()
-    soccer=[]
-    now_utc=datetime.now(timezone.utc)
-    for m in markets:
-        title_raw=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
-        tl=title_raw.lower()
-        if "edmonton" in tl or "ottawa" in tl or "draisaitl" in tl:
-            continue
-        if "wins by more than" in tl:
-            continue
-        if "over" not in tl or "goals scored" not in tl:
-            continue
-        if not re.search(r"over\s+(2\.5|3\.5)\s+goals\s+scored", tl):
-            continue
-        ya=None
-        for k in ["yes_ask","yes_bid","last_price"]:
-            v=m.get(k)
-            if v not in [None,0,"0",""]:
-                try:
-                    ya=int(float(v))
-                    break
-                except:
-                    continue
-        if ya is None:
-            ya=50
-        if not (10 <= ya <= 90):
-            continue
-        exp_str=m.get("expiration_time","")
+    print(f"V41 {now}")
+    try:
+        markets=get_all()
+        print(f"total {len(markets)}")
+        soccer=[]
+        for m in markets:
+            title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")
+            tl=title.lower()
+            if "over" in tl and "goals scored" in tl and "2.5" in tl:
+                soccer.append(m)
+            if "over" in tl and "goals scored" in tl and "3.5" in tl:
+                soccer.append(m)
+        print(f"soccer {len(soccer)}")
+        if not hasattr(analyze,"first"):
+            analyze.first=True
+            send(f"V41 MINIMAL Live - Total {len(markets)} Soccer {len(soccer)} - Deploy fix")
+        else:
+            if len(soccer) > 0:
+                msg=f"PRE-MATCH {now} - {len(soccer)} Soccer Over 2.5/3.5\n"
+                for s in soccer[:3]:
+                    msg+=f"{s.get('title','')[:40]} {s.get('ticker','')[:20]}\n"
+                send(msg)
+    except Exception as e:
+        print(f"analyze err {e}")
+        send(f"Error {e}")
+
+def bot_loop():
+    time.sleep(3)
+    send("V41 starting")
+    while True:
         try:
-            if exp_str:
-                dt=datetime.fromisoformat(exp_str.replace("Z","+00:00"))
-                if dt < now_utc:
-                    continue
-        except:
-            pass
-        # Team clean simple
-        t=m.get("yes_sub_title","") or m.get("title","")
-        t=t.replace("yes","").replace("no","")
-        t=t.split("Over")[0]
-        t=t.replace(",","").strip()[:40]
-        if len(t) < 3:
-            t=m.get("event_ticker","")[:20]
-        clean_match=re.search(r"Over\s+\d+\.5\s+goals\s+scored", title_raw, re.I)
-        clean=clean_match.group(0) if clean_match else "Over"
-        soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":t,"ev":m.get("event_ticker",""),"vol":m.get("volume",0),"exp":exp_str[5:16] if exp_str else ""})
-    print(f"Total {len(markets)} Soccer {len(soccer)}")
-    if not hasattr(analyze,"first"):
-        analyze.first=True
-        send(f"V40 FINAL - Deploy fix - 410 middle - Soccer 2.5/3.5")
-    if soccer:
-        from collections import defaultdict
-        by_ev=defaultdict(list)
-        for s in soccer:
-           
+            analyze()
+            time.sleep(180)
+        except Exception as e:
+            print(e)
+            time.sleep(60)
+
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"V41 running")
+    def log_message(self,*a):
+        pass
+
+threading.Thread(target=bot_loop, daemon=True).start()
+HTTPServer(("0.0.0.0", int(os.getenv("PORT","10000"))), H).serve_forever()
