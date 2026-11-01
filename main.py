@@ -34,42 +34,44 @@ def get_all():
             break
     return all_m
 
-def simple_team(title):
-    t=title.lower()
-    # Priority known teams
-    if "【entity-cruz azul¦canonical_name=Cruz Azul】" in t:
+def team_name(m):
+    # Use yes_sub_title first
+    y=m.get("yes_sub_title","") or ""
+    t=m.get("title","") or ""
+    s=m.get("subtitle","") or ""
+    raw=(y+" "+t+" "+s).lower()
+    if "【entity-cruz azul¦canonical_name=Cruz Azul】" in raw:
         return "【entity-Cruz Azul¦canonical_name=Cruz Azul】"
-    if "tijuana" in t:
+    if "tijuana" in raw:
         return "Tijuana"
-    if "quilmes" in t:
+    if "quilmes" in raw:
         return "Quilmes"
-    if "lanus" in t:
+    if "lanus" in raw:
         return "Lanus"
-    if "vancouver" in t:
+    if "vancouver" in raw:
         return "Vancouver"
-    if "seattle" in t:
+    if "seattle" in raw:
         return "Seattle"
-    if "los angeles" in t and "miami" in t:
-        return "LAFC vs Miami"
-    if "miami" in t:
-        return "【entity-Inter Miami¦canonical_name=Inter Miami】"
-    if "【entity-palmeiras¦canonical_name=Palmeiras】" in t:
-        return "【entity-Palmeiras¦canonical_name=Palmeiras】"
-    if "gremio" in t:
-        return "Gremio"
-    if "nashville" in t:
+    if "nashville" in raw:
         return "Nashville"
-    # fallback first 2 words before Over
-    raw=title.split("Over")[0].replace(",","").strip()
-    raw=raw.replace("yes","").replace("no","").strip()
-    words=raw.split()
-    if len(words)>=2:
-        return " ".join(words[:2])[:20]
-    return raw[:20]
+    if "los angeles" in raw and "miami" in raw:
+        return "LAFC vs Miami"
+    if "【entity-palmeiras¦canonical_name=Palmeiras】" in raw:
+        return "【entity-Palmeiras¦canonical_name=Palmeiras】"
+    if "gremio" in raw:
+        return "Gremio"
+    if "miami" in raw:
+        return "【entity-Inter Miami¦canonical_name=Inter Miami】"
+    # fallback: take yes_sub before Over
+    if "over" in y.lower():
+        base=y.split("Over")[0].split("over")[0].strip()[:20]
+        if len(base)>=3 and "KX" not in base.upper():
+            return base
+    return ""
 
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V50 {now}")
+    print(f"V51 {now}")
     try:
         markets=get_all()
         soccer=[]
@@ -79,6 +81,10 @@ def analyze():
             ev=(m.get("event_ticker","") or "").upper()
             title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
             tl=title.lower()
+            # Soccer filter - V49 51 clean
+            if "SOCCER" not in series and "SOCCER" not in ev:
+                if not any(x in tl for x in ["【entity-cruz azul¦canonical_name=Cruz Azul】","tijuana","quilmes","lanus","vancouver","seattle","nashville","【entity-palmeiras¦canonical_name=Palmeiras】","gremio","miami","mls"]):
+                    continue
             if "both teams to score" in tl:
                 continue
             if "edmonton" in tl or "ottawa" in tl or "lendeborg" in tl or "austin reaves" in tl or "yaxel" in tl:
@@ -110,8 +116,8 @@ def analyze():
                         continue
             except:
                 pass
-            team=simple_team(title)
-            if "CROSSCATEGORY" in team.upper() or "KXMV" in team.upper():
+            team=team_name(m)
+            if not team or "CROSS" in team.upper() or "KX" in team.upper():
                 continue
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
             soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":ev,"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
@@ -119,10 +125,9 @@ def analyze():
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V50 FINAL Middle Pairing Live - Total {len(markets)} Soccer {len(soccer)} - Team Key pairing")
+            send(f"V51 FINAL CLEAN 51 Soccer Team 100% - Total {len(markets)} Soccer {len(soccer)}")
 
         if soccer:
-            # Group by team name, not ev
             by_team={}
             for s in soccer:
                 k=s["team"]
@@ -135,7 +140,6 @@ def analyze():
                 o25=[x for x in lst if "2.5" in x["clean"]]
                 o35=[x for x in lst if "3.5" in x["clean"]]
                 if o25 and o35:
-                    # pick cheapest
                     a=min(o25, key=lambda x: x["over"])
                     b=min(o35, key=lambda x: x["over"])
                     middles.append((a,b))
@@ -158,7 +162,7 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V50 starting")
+    send("V51 starting")
     while True:
         try:
             analyze()
@@ -171,7 +175,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V50 running")
+        self.wfile.write(b"V51 running")
     def log_message(self,*a):
         pass
 
