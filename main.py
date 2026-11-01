@@ -39,7 +39,7 @@ def team_name(m):
     t=(m.get("title","") or "").lower()
     raw=y+" "+t
     if "cruz" in raw:
-        return "【entity-CruzAzul¦canonical_name=cruz azul】"
+        return "CruzAzul"
     if "tijuana" in raw:
         return "Tijuana"
     if "quilmes" in raw:
@@ -52,31 +52,31 @@ def team_name(m):
         return "Seattle"
     if "nashville" in raw:
         return "Nashville"
-    if "【entity-palmeiras¦canonical_name=Palmeiras】" in raw:
-        return "【entity-Palmeiras¦canonical_name=Palmeiras】"
+    if "palmeiras" in raw:
+        return "Palmeiras"
     if "gremio" in raw:
         return "Gremio"
     if "los angeles" in raw and "miami" in raw:
         return "LAFCvsMIA"
     if "miami" in raw:
-        return "Miami"
+        return "MiamiTeam"
     return ""
 
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V54 {now}")
+    print(f"V55 {now}")
     try:
         markets=get_all()
         soccer=[]
         now_utc=datetime.now(timezone.utc)
-        limit_7d=now_utc+timedelta(days=7)
+        limit=now_utc+timedelta(days=7)
         for m in markets:
             series=(m.get("series_ticker","") or "").upper()
             ev=(m.get("event_ticker","") or "").upper()
             title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
             tl=title.lower()
             if "SOCCER" not in series and "SOCCER" not in ev:
-                if not any(x in tl for x in ["cruz","tijuana","quilmes","lanus","vancouver","seattle","nashville","【entity-palmeiras¦canonical_name=Palmeiras】","gremio","miami","mls"]):
+                if not any(x in tl for x in ["cruz","tijuana","quilmes","lanus","vancouver","seattle","nashville","palmeiras","gremio","miami","mls"]):
                     continue
             if "both teams to score" in tl:
                 continue
@@ -89,32 +89,25 @@ def analyze():
             if "2.5" not in tl and "3.5" not in tl:
                 continue
             ya=None
-            yb=m.get("yes_bid")
-            ya_raw=m.get("yes_ask")
-            lp=m.get("last_price")
-            try:
-                if ya_raw is not None and yb is not None and ya_raw!=0 and yb!=0:
-                    ya=int((float(ya_raw)+float(yb))/2)
-                elif ya_raw is not None and ya_raw!=0:
-                    ya=int(float(ya_raw))
-                elif yb is not None and yb!=0:
-                    ya=int(float(yb))
-                elif lp is not None and lp!=0:
-                    ya=int(float(lp))
-            except:
-                pass
+            for k in ["yes_ask","yes_bid","last_price"]:
+                v=m.get(k)
+                if v not in [None,0,"0",""]:
+                    try:
+                        ya=int(float(v))
+                        break
+                    except:
+                        continue
             if ya is None:
                 ya=50
             if not (5 <= ya <= 95):
                 continue
             exp=m.get("expiration_time","")
-            exp_dt=None
             try:
                 if exp:
-                    exp_dt=datetime.fromisoformat(exp.replace("Z","+00:00"))
-                    if exp_dt < now_utc:
+                    dt=datetime.fromisoformat(exp.replace("Z","+00:00"))
+                    if dt < now_utc:
                         continue
-                    if exp_dt > limit_7d:
+                    if dt > limit:
                         continue
             except:
                 pass
@@ -122,5 +115,4 @@ def analyze():
             if not team:
                 continue
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            vol=m.get("volume",0) or 0
-            soccer.append({"over":ya,"under":100-ya,"clean":
+            soccer.append({"over":ya,"under":100-ya
