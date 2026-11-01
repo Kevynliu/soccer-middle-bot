@@ -34,9 +34,42 @@ def get_all():
             break
     return all_m
 
+def simple_team(title):
+    t=title.lower()
+    # Priority known teams
+    if "【entity-cruz azul¦canonical_name=Cruz Azul】" in t:
+        return "【entity-Cruz Azul¦canonical_name=Cruz Azul】"
+    if "tijuana" in t:
+        return "Tijuana"
+    if "quilmes" in t:
+        return "Quilmes"
+    if "lanus" in t:
+        return "Lanus"
+    if "vancouver" in t:
+        return "Vancouver"
+    if "seattle" in t:
+        return "Seattle"
+    if "los angeles" in t and "miami" in t:
+        return "LAFC vs Miami"
+    if "miami" in t:
+        return "【entity-Inter Miami¦canonical_name=Inter Miami】"
+    if "【entity-palmeiras¦canonical_name=Palmeiras】" in t:
+        return "【entity-Palmeiras¦canonical_name=Palmeiras】"
+    if "gremio" in t:
+        return "Gremio"
+    if "nashville" in t:
+        return "Nashville"
+    # fallback first 2 words before Over
+    raw=title.split("Over")[0].replace(",","").strip()
+    raw=raw.replace("yes","").replace("no","").strip()
+    words=raw.split()
+    if len(words)>=2:
+        return " ".join(words[:2])[:20]
+    return raw[:20]
+
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V49 {now}")
+    print(f"V50 {now}")
     try:
         markets=get_all()
         soccer=[]
@@ -46,11 +79,6 @@ def analyze():
             ev=(m.get("event_ticker","") or "").upper()
             title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
             tl=title.lower()
-            # Soccer only
-            if "SOCCER" not in series and "SOCCER" not in ev:
-                if not any(x in tl for x in ["mls","premier","la liga","bundesliga","serie a","ligue","ucl","cruz azul","tijuana","vancouver","seattle","palmeiras","gremio","nashville","quilmes","lanus"]):
-                    continue
-            # Filters
             if "both teams to score" in tl:
                 continue
             if "edmonton" in tl or "ottawa" in tl or "lendeborg" in tl or "austin reaves" in tl or "yaxel" in tl:
@@ -82,11 +110,8 @@ def analyze():
                         continue
             except:
                 pass
-            team=m.get("title","") or m.get("yes_sub_title","")
-            team=team.replace("yes","").replace("no","").split("Over")[0].replace(",","").strip()[:35]
-            if len(team) < 3 or "KX" in team.upper() or "CROSSCATEGORY" in team.upper():
-                team=ev[:20] if ev else "Soccer"
-            if "CROSSCATEGORY" in team.upper():
+            team=simple_team(title)
+            if "CROSSCATEGORY" in team.upper() or "KXMV" in team.upper():
                 continue
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
             soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":ev,"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
@@ -94,26 +119,30 @@ def analyze():
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V49 FINAL Soccer Only Live - Total {len(markets)} Soccer {len(soccer)} - CrossCategory team ဖျက်")
+            send(f"V50 FINAL Middle Pairing Live - Total {len(markets)} Soccer {len(soccer)} - Team Key pairing")
 
         if soccer:
-            by_ev={}
+            # Group by team name, not ev
+            by_team={}
             for s in soccer:
-                ev=s["ev"]
-                if ev not in by_ev:
-                    by_ev[ev]=[]
-                by_ev[ev].append(s)
+                k=s["team"]
+                if k not in by_team:
+                    by_team[k]=[]
+                by_team[k].append(s)
 
             middles=[]
-            for ev, lst in by_ev.items():
+            for team, lst in by_team.items():
                 o25=[x for x in lst if "2.5" in x["clean"]]
                 o35=[x for x in lst if "3.5" in x["clean"]]
                 if o25 and o35:
-                    middles.append((o25[0],o35[0]))
+                    # pick cheapest
+                    a=min(o25, key=lambda x: x["over"])
+                    b=min(o35, key=lambda x: x["over"])
+                    middles.append((a,b))
 
             middles=middles[:5]
             if middles:
-                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer 2.5/3.5 - {len(middles)} Middle\n(ပွဲပြီးတာ မပါ, လက်ရှိ+နောက်လာမယ့်)\n\n"
+                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer Clean - {len(middles)} Middle\n(ပွဲပြီးတာ မပါ, လက်ရှိ+နောက်လာမယ့်)\n\n"
                 for i,(a,b) in enumerate(middles,1):
                     msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win 65%+ | Pre 2 side buy - 15' 0-0 Under add - 70' Jackpot Over\n\n"
                 send(msg)
@@ -129,7 +158,7 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V49 starting")
+    send("V50 starting")
     while True:
         try:
             analyze()
@@ -142,7 +171,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V49 running")
+        self.wfile.write(b"V50 running")
     def log_message(self,*a):
         pass
 
