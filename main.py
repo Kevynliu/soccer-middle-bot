@@ -1,4 +1,4 @@
-import os, time, requests, threading
+import os, time, requests, threading, re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 
@@ -34,26 +34,57 @@ def get_all():
             break
     return all_m
 
+def clean_team(raw_title, ev):
+    # raw_title like "Cruz Azul vs Tijuana Over 2.5 goals scored" -> "Cruz Azul vs Tijuana"
+    # or "Both Teams To Score Cruz Azul Both Teams To Score Yes" -> filter out earlier
+    t=raw_title or ""
+    # Remove yes/no
+    t=re.sub(r"^(yes|no)\s+", "", t, flags=re.I)
+    # Take before Over
+    t=t.split("Over")[0]
+    t=t.split("Both Teams")[0]
+    t=t.replace(",","").replace("  "," ").strip()
+    # If still messy like "KXMVECROSSCATEGORY-S", use ev
+    if "CROSSCATEGORY" in t.upper() or len(t) < 5 or "KX" in t[:2]:
+        # ev like KXSOCCER-2025-11-04-CRUZ-TIJ
+        if ev and "-" in ev:
+            parts=ev.split("-")
+            if len(parts) >= 2:
+                # last two parts are team codes
+                t1=parts[-2]
+                t2=parts[-1]
+                # Map codes
+                mapping={"CRUZ":"Cruz Azul","TIJ":"Tijuana","VAN":"Vancouver","SEA":"Seattle","NYRB":"NY RB","ATL":"Atlanta","NSH":"Nashville"}
+                t1=mapping.get(t1.upper(), t1)
+                t2=mapping.get(t2.upper(), t2)
+                return f"{t1} vs {t2}"
+        return ev[:25] if ev else "Soccer Match"
+    return t[:40]
+
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V42 {now}")
+    print(f"V43 {now}")
     try:
         markets=get_all()
         soccer=[]
         now_utc=datetime.now(timezone.utc)
         for m in markets:
-            title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
-            tl=title.lower()
+            title_raw=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
+            tl=title_raw.lower()
+            # Filter
+            if "croscategory" in tl or "crosscategory" in tl:
+                continue
+            if "both teams to score" in tl or "btts" in tl:
+                continue
             if "edmonton" in tl or "ottawa" in tl:
                 continue
             if "wins by more than" in tl:
                 continue
             if "over" not in tl or "goals scored" not in tl:
                 continue
-            # Only 2.5 and 3.5
             if "2.5" not in tl and "3.5" not in tl:
                 continue
-            # Price
+            # Price - skip Vol 0 fake 50c if possible, try get real
             ya=None
             for k in ["yes_ask","yes_bid","last_price"]:
                 v=m.get(k)
@@ -64,10 +95,9 @@ def analyze():
                     except:
                         continue
             if ya is None:
-                ya=50
-            if not (10 <= ya <= 90):
+                continue # Skip fake 50c
+            if not (15 <= ya <= 85):
                 continue
-            # ပွဲပြီးတာ မပါ
             exp=m.get("expiration_time","")
             try:
                 if exp:
@@ -76,23 +106,17 @@ def analyze():
                         continue
             except:
                 pass
-            # Team clean
-            team=m.get("yes_sub_title","") or m.get("title","")
-            team=team.replace("yes","").replace("no","")
-            team=team.split("Over")[0].replace(",","").strip()[:40]
-            if len(team) < 3:
-                team=m.get("event_ticker","")[:20]
-            # Clean Over text
-            clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":m.get("event_ticker",""),"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
+            ev=m.get("event_ticker","")
+            team=clean_team(m.get("title","") or m.get("yes_sub_title",""), ev)
+            clean="Over 2.5 goals" if "2.5" in tl else "Over 3.5 goals"
+            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":ev,"vol":m.get("volume",0),"exp":exp[5:16] if exp else ""})
 
-        print(f"total {len(markets)} soccer {len(soccer)}")
+        print(f"total {len(markets)} soccer clean {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V42 FINAL MIDDLE Live - Total {len(markets)} Soccer {len(soccer)} - Deploy ok")
+            send(f"V43 FINAL CLEAN Live - BTTS + CrossCategory ဖျက် - Total {len(markets)} Soccer {len(soccer)}")
 
         if soccer:
-            # Group by event
             by_ev={}
             for s in soccer:
                 ev=s["ev"]
@@ -109,13 +133,13 @@ def analyze():
 
             middles=middles[:5]
             if middles:
-                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer 2.5/3.5 - {len(middles)} Middle\n(ပွဲပြီးတာ မပါ, လက္ရွိ+ေနာက္လာမယ့္)\n\n"
+                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer 2.5/3.5 Clean - {len(middles)} Middle\n(ပွဲပြီးတာ မပါ, လက်ရှိ+နောက်လာမယ့်)\n\n"
                 for i,(a,b) in enumerate(middles,1):
-                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win Win 65%+\n   Strategy: Pre-match 2 side buy - 15' 0-0 Under add - 70' Jackpot Over\n\n"
+                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win Win 65%+ | Pre 2 side buy - 15' 0-0 Under add - 70' Jackpot Over\n\n"
                 send(msg)
             else:
                 top=soccer[:5]
-                msg=f"PRE-MATCH {now} - {len(soccer)} Soccer - Middle waiting\n"
+                msg=f"PRE-MATCH {now} - {len(soccer)} Soccer Clean - Middle waiting\n"
                 for s in top:
                     msg+=f"{s['team']} {s['clean']} {s['over']}c Exp {s['exp']}\n"
                 send(msg)
@@ -125,7 +149,7 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V42 starting")
+    send("V43 starting")
     while True:
         try:
             analyze()
@@ -138,7 +162,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V42 running")
+        self.wfile.write(b"V43 running")
     def log_message(self,*a):
         pass
 
