@@ -9,39 +9,53 @@ BASE="https://api.elections.kalshi.com/trade-api/v2"
 
 def send(msg):
     try:
-        # Avoid banned words that trigger entity tag
-        safe=msg.replace("Kalshi","KLSH").replace("kalshi","KLSH")
+        safe=msg.replace("【entity-Kalshi¦canonical_name=Kalshi】","KLSH")
         requests.post(f"https://api.telegram.org/bot{BOT}/sendMessage", data={"chat_id":CHAT,"text":safe}, timeout=15)
     except:
         pass
 
-def analyze():
-    try:
-        all_m=[]
-        cur=None
-        for i in range(12):
+def get_all():
+    all_m=[]
+    cur=None
+    for i in range(20):
+        for retry in range(3):
             try:
                 p={"status":"open","limit":400}
                 if cur:
                     p["cursor"]=cur
-                r=requests.get(f"{BASE}/markets", params=p, timeout=12)
+                r=requests.get(f"{BASE}/markets", params=p, timeout=20)
+                print(f"batch {i} try {retry} status {r.status_code} cur {bool(cur)}")
+                if r.status_code==429:
+                    print("rate limit wait 5s")
+                    time.sleep(5)
+                    continue
                 if r.status_code!=200:
-                    break
+                    time.sleep(1)
+                    continue
                 data=r.json()
                 ms=data.get("markets",[])
                 if not ms:
-                    break
+                    print(f"batch {i} empty")
+                    return all_m
                 all_m.extend(ms)
                 cur=data.get("cursor")
+                print(f"batch {i} got {len(ms)} total {len(all_m)} next {bool(cur)}")
                 if not cur:
-                    break
-                time.sleep(0.3)
-            except:
+                    return all_m
+                time.sleep(0.8)
                 break
+            except Exception as e:
+                print(f"batch {i} err {e}")
+                time.sleep(1)
+                continue
+    return all_m
 
+def analyze():
+    try:
+        markets=get_all()
         soccer=[]
         now_utc=datetime.utcnow()
-        for m in all_m:
+        for m in markets:
             title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
             tl=title.lower()
             if "both teams to score" in tl:
@@ -95,10 +109,14 @@ def analyze():
                 team="MIA"
             elif "atalanta" in txt or "parma" in txt:
                 team="ATA-PAR"
-            elif "lorient" in txt:
+            elif "lorient" in txt or "brest" in txt:
                 team="LOR-BRE"
             elif "sassuolo" in txt or "fiorentina" in txt:
                 team="SAS-FIO"
+            elif "quilmes" in txt:
+                team="QL"
+            elif "lanus" in txt:
+                team="LN"
             elif " vs " in txt:
                 team="SOC"
             if not team:
@@ -106,10 +124,10 @@ def analyze():
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
             soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"exp":exp[5:16] if exp else "","vol":m.get("volume",0) or 0})
 
-        print(f"V68 total {len(all_m)} soccer {len(soccer)}")
+        print(f"V69 total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V68 FINAL Clean Deploy - Total {len(all_m)} Soccer {len(soccer)} - Tag fixed, 12 batch, Middle OK")
+            send(f"V69 FINAL Rate Fix - Total {len(markets)} Soccer {len(soccer)} - 20 batch retry 0.8s - Should be 6000+ 60+")
 
         if soccer:
             by_team={}
@@ -128,14 +146,14 @@ def analyze():
                     b=max(o35, key=lambda x: x["vol"])
                     middles.append((a,b))
 
-            middles=middles[:5]
+            middles=middles[:6]
             if middles:
-                msg=f"MIDDLE {time.strftime('%H:%M:%S')} - {len(soccer)} games - {len(middles)} Middle Clean No Tag\n\n"
+                msg=f"MIDDLE {time.strftime('%H:%M:%S')} - {len(soccer)} games - {len(middles)} Middle Rate Fix\n\n"
                 for i,(a,b) in enumerate(middles,1):
                     msg+=f"{i}. {a['team']} [EST]\n   O2.5 {a['over']}c + U3.5 {b['under']}c (O3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 = both win | PRE 2 side | 15' U add | 70' JACKPOT O\n\n"
                 send(msg)
             else:
-                top=soccer[:5]
+                top=soccer[:6]
                 if top:
                     msg=f"TOP {time.strftime('%H:%M:%S')} - {len(soccer)} games\n\n"
                     for s in top:
@@ -147,11 +165,11 @@ def analyze():
 
 def bot_loop():
     time.sleep(2)
-    send(f"V68 starting - PORT {PORT} - Clean logic no tag")
+    send(f"V69 starting - 20 batch rate fix")
     while True:
         try:
             analyze()
-            time.sleep(180)
+            time.sleep(200)
         except Exception as e:
             print(e)
             time.sleep(60)
@@ -160,7 +178,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V68 running clean")
+        self.wfile.write(b"V69 running")
     def log_message(self,*a):
         pass
 
