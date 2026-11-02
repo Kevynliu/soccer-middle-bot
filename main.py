@@ -15,7 +15,7 @@ def send(msg):
 def get_all():
     all_m=[]
     cur=None
-    for i in range(12):
+    for i in range(15):
         try:
             p={"status":"open","limit":400}
             if cur:
@@ -35,36 +35,52 @@ def get_all():
     return all_m
 
 def team_name(m):
-    y=(m.get("yes_sub_title","") or "").lower()
-    t=(m.get("title","") or "").lower()
-    raw=y+" "+t
-    if "cruz" in raw:
-        return "CZ"
-    if "tijuana" in raw:
-        return "TJ"
-    if "quilmes" in raw:
-        return "QL"
-    if "lanus" in raw:
-        return "LN"
-    if "vancouver" in raw:
-        return "VAN"
-    if "seattle" in raw:
-        return "SEA"
-    if "nashville" in raw:
-        return "NSH"
-    if "palmeiras" in raw:
-        return "PAL"
-    if "gremio" in raw:
-        return "GRE"
-    if "los angeles" in raw and "miami" in raw:
-        return "LA-MIA"
-    if "miami" in raw:
-        return "MIA"
+    # Use yes_sub_title full
+    y=m.get("yes_sub_title","") or ""
+    # Example: "Over 2.5 goals scored in 【entity-Newcastle¦canonical_name=Newcastle】 vs 【entity-Everton¦canonical_name=Everton】"
+    # Take after "in" or before "Over"
+    raw=y
+    if " in " in raw:
+        raw=raw.split(" in ")[-1]
+    raw=raw.split("Over")[0].strip()
+    raw=raw.replace(" - "," vs ").strip()
+    # Clean
+    if len(raw) >= 3 and "KX" not in raw.upper() and len(raw) <= 35:
+        # Avoid entity tag: replace space with dash for known EPL teams
+        # Newcastle vs Everton -> NEW-EVE to avoid tag
+        low=raw.lower()
+        if "newcastle" in low and "everton" in low:
+            return "NEW-EVE"
+        if "newcastle" in low:
+            return "NEW"
+        if "everton" in low:
+            return "EVE"
+        if "lorient" in low and "brest" in low:
+            return "LOR-BRE"
+        if "sassuolo" in low:
+            return "SAS-FIO"
+        if "atalanta" in low:
+            return "ATA-PAR"
+        if "cruz" in low:
+            return "CZ"
+        if "miami" in low:
+            return "MIA"
+        if "vancouver" in low:
+            return "VAN"
+        if "seattle" in low:
+            return "SEA"
+        if "nashville" in low:
+            return "NSH"
+        # fallback short
+        words=raw.split(" vs ")
+        if len(words)==2:
+            return words[0][:3].upper()+"-"+words[1][:3].upper()
+        return raw[:18]
     return ""
 
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V59 {now}")
+    print(f"V60 {now}")
     try:
         markets=get_all()
         soccer=[]
@@ -91,28 +107,40 @@ def analyze():
                 except:
                     pass
             ya=None
-            for k in ["yes_ask","yes_bid","last_price"]:
-                v=m.get(k)
-                if v not in [None,0,"0",""]:
-                    try:
-                        ya=int(float(v))
-                        break
-                    except:
-                        continue
+            yb=None
+            ya_raw=None
+            lp=None
+            try:
+                ya_raw=m.get("yes_ask")
+                yb=m.get("yes_bid")
+                lp=m.get("last_price")
+                if ya_raw is not None and yb is not None and ya_raw!=0 and yb!=0:
+                    ya=int((float(ya_raw)+float(yb))/2)
+                elif ya_raw is not None and ya_raw!=0:
+                    ya=int(float(ya_raw))
+                elif yb is not None and yb!=0:
+                    ya=int(float(yb))
+                elif lp is not None and lp!=0:
+                    ya=int(float(lp))
+            except:
+                pass
             if ya is None:
                 ya=50
             if not (5 <= ya <= 95):
                 continue
             team=team_name(m)
-            if not team:
+            if not team or "KX" in team.upper():
                 continue
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"exp":exp_str[5:16] if exp_str else "","vol":m.get("volume",0)})
+            real=ya_raw is not None or yb is not None
+            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"exp":exp_str[5:16] if exp_str else "","vol":m.get("volume",0) or 0,"real":real})
 
+        soccer.sort(key=lambda x: (x["real"], x["vol"]), reverse=True)
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V59 FINAL No Tag - Total {len(markets)} Soccer {len(soccer)} Clean - Tag fixed")
+            real_cnt=sum(1 for s in soccer if s["real"])
+            send(f"V60 FINAL All Soccer - Total {len(markets)} Soccer {len(soccer)} (Real {real_cnt}) - NEW-EVE included")
 
         if soccer:
             by_team={}
@@ -131,19 +159,29 @@ def analyze():
                     b=min(o35, key=lambda x: x["over"])
                     middles.append((a,b))
 
-            middles=middles[:6]
+            middles=sorted(middles, key=lambda x: x[0]["vol"], reverse=True)[:6]
             if middles:
-                msg=f"MIDDLE {now} - {len(soccer)} games - {len(middles)} Middle\n\n"
+                msg=f"MIDDLE {now} - {len(soccer)} games - {len(middles)} Middle - EPL included\n\n"
                 for i,(a,b) in enumerate(middles,1):
-                    msg+=f"{i}. {a['team']}\n   O2.5 {a['over']}c + U3.5 {b['under']}c (O3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 = both win | PRE 2 side | 15' U add | 70' JACKPOT O\n\n"
+                    tag="LIVE" if a["real"] or b["real"] else "EST"
+                    msg+=f"{i}. {a['team']} [{tag}]\n   O2.5 {a['over']}c + U3.5 {b['under']}c (O3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 = both win | PRE 2 side | 15' U add | 70' JACKPOT O\n\n"
                 send(msg)
+            else:
+                # Show top Over 2.5 including NEW-EVE
+                top=[s for s in soccer if "2.5" in s["clean"]][:6]
+                if top:
+                    msg=f"TOP O2.5 {now} - {len(soccer)} games - Middle waiting\n\n"
+                    for s in top:
+                        tag="LIVE" if s["real"] else "EST"
+                        msg+=f"{s['team']} [{tag}] O2.5 {s['over']}c Vol {s['vol']} Exp {s['exp']}\n"
+                    send(msg)
 
     except Exception as e:
         print(f"err {e}")
 
 def bot_loop():
     time.sleep(3)
-    send("V59 starting no tag")
+    send("V60 starting EPL included")
     while True:
         try:
             analyze()
@@ -156,7 +194,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V59 running")
+        self.wfile.write(b"V60 running")
     def log_message(self,*a):
         pass
 
