@@ -39,32 +39,32 @@ def team_name(m):
     t=(m.get("title","") or "").lower()
     raw=y+" "+t
     if "cruz" in raw:
-        return "CruzAzul"
+        return "CZ"
     if "tijuana" in raw:
-        return "Tijuana"
+        return "TJ"
     if "quilmes" in raw:
-        return "Quilmes"
+        return "QL"
     if "lanus" in raw:
-        return "Lanus"
+        return "LN"
     if "vancouver" in raw:
-        return "Vancouver"
+        return "VAN"
     if "seattle" in raw:
-        return "Seattle"
+        return "SEA"
     if "nashville" in raw:
-        return "Nashville"
+        return "NSH"
     if "palmeiras" in raw:
-        return "Palmeiras"
+        return "PAL"
     if "gremio" in raw:
-        return "Gremio"
+        return "GRE"
     if "los angeles" in raw and "miami" in raw:
-        return "LAFCvsMIA"
+        return "LA-MIA"
     if "miami" in raw:
-        return "MiamiTeam"
+        return "MIA"
     return ""
 
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V58 {now}")
+    print(f"V59 {now}")
     try:
         markets=get_all()
         soccer=[]
@@ -112,7 +112,7 @@ def analyze():
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V58 FINAL No Tag - Total {len(markets)} Soccer {len(soccer)} Clean - Tomorrow EPL not in KX market - Only MLS/LigaMX has Over market")
+            send(f"V59 FINAL No Tag - Total {len(markets)} Soccer {len(soccer)} Clean - Tag fixed")
 
         if soccer:
             by_team={}
@@ -131,12 +131,11 @@ def analyze():
                     b=min(o35, key=lambda x: x["over"])
                     middles.append((a,b))
 
-            middles=middles[:5]
+            middles=middles[:6]
             if middles:
-                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer - {len(middles)} Middle (Finished filtered)\n\n"
+                msg=f"MIDDLE {now} - {len(soccer)} games - {len(middles)} Middle\n\n"
                 for i,(a,b) in enumerate(middles,1):
-                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win | PRE 2 side | 15' 0-0 Under add | 70' Jackpot Over\n\n"
-                msg+=f"Note: Tomorrow EPL 【entity-Newcastle¦canonical_name=Newcastle】/【entity-Everton¦canonical_name=Everton】, Ligue1, SerieA not in KX list - KX has only MLS/LigaMX Over market - Use separate book for EPL middle\n"
+                    msg+=f"{i}. {a['team']}\n   O2.5 {a['over']}c + U3.5 {b['under']}c (O3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 = both win | PRE 2 side | 15' U add | 70' JACKPOT O\n\n"
                 send(msg)
 
     except Exception as e:
@@ -144,7 +143,7 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V58 starting no tag")
+    send("V59 starting no tag")
     while True:
         try:
             analyze()
@@ -157,7 +156,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V58 running")
+        self.wfile.write(b"V59 running")
     def log_message(self,*a):
         pass
 
