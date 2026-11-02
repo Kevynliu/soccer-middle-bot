@@ -12,17 +12,33 @@ def send(msg):
     except:
         pass
 
-def get_all():
+def get_markets_by_series(series_list):
+    all_m=[]
+    for series in series_list:
+        try:
+            p={"status":"open","limit":200,"series_ticker":series}
+            r=requests.get(f"{BASE}/markets", params=p, timeout=15)
+            if r.status_code==200:
+                data=r.json()
+                ms=data.get("markets",[])
+                print(f"Series {series}: {len(ms)}")
+                all_m.extend(ms)
+            time.sleep(0.5)
+        except:
+            continue
+    return all_m
+
+def get_all_open():
     all_m=[]
     cur=None
-    for i in range(18):
+    for i in range(12):
         try:
             p={"status":"open","limit":400}
             if cur:
                 p["cursor"]=cur
-            r=requests.get(f"{BASE}/markets", params=p, timeout=20)
+            r=requests.get(f"{BASE}/markets", params=p, timeout=15)
             if r.status_code!=200:
-                continue
+                break
             data=r.json()
             ms=data.get("markets",[])
             all_m.extend(ms)
@@ -34,38 +50,9 @@ def get_all():
             break
     return all_m
 
-def get_orderbook_price(ticker):
-    try:
-        r=requests.get(f"{BASE}/markets/{ticker}/orderbook", timeout=10)
-        if r.status_code!=200:
-            return None
-        data=r.json()
-        ob=data.get("orderbook",{})
-        yes=ob.get("yes_dollars",[]) or ob.get("yes",[])
-        no=ob.get("no_dollars",[]) or ob.get("no",[])
-        # yes_dollars is [[price_dollars, count],...] price like "0.55"
-        if yes:
-            try:
-                best=yes[-1]
-                price=float(best[0]) if isinstance(best, (list,tuple)) else float(best)
-                return int(price*100)
-            except:
-                pass
-        if no:
-            try:
-                best=no[-1]
-                price=float(best[0]) if isinstance(best, (list,tuple)) else float(best)
-                # No bid 0.45 => Yes ask 55
-                return int((1-price)*100)
-            except:
-                pass
-    except:
-        pass
-    return None
-
 def team_name(m):
-    for field in [m.get("yes_sub_title",""), m.get("title",""), m.get("subtitle",""), m.get("event_ticker","")]:
-        low=field.lower()
+    for f in [m.get("yes_sub_title",""), m.get("title",""), m.get("event_ticker","")]:
+        low=f.lower()
         if "newcastle" in low and "everton" in low:
             return "NEW-EVE"
         if "newcastle" in low:
@@ -82,10 +69,6 @@ def team_name(m):
             return "CZ"
         if "tijuana" in low:
             return "TJ"
-        if "quilmes" in low:
-            return "QL"
-        if "lanus" in low:
-            return "LN"
         if "vancouver" in low:
             return "VAN"
         if "seattle" in low:
@@ -94,13 +77,32 @@ def team_name(m):
             return "NSH"
         if "miami" in low:
             return "MIA"
+        if "quilmes" in low:
+            return "QL"
+        if "lanus" in low:
+            return "LN"
     return ""
 
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V62 {now}")
+    print(f"V63 {now}")
     try:
-        markets=get_all()
+        # 1. General open 4800
+        markets=get_all_open()
+        # 2. Soccer series specific to catch NEW-EVE beyond 4800
+        soccer_series=["SOCCER","KXSOCCER","SOCCEREPL","KXSOCCEREPL","SOCCERMLS","KXSOCCERMLS","KXMVECROSSCATEGORY-S","SOCCERLIGAMX"]
+        extra=get_markets_by_series(soccer_series)
+        markets=markets+extra
+        # Dedup by ticker
+        seen=set()
+        uniq=[]
+        for m in markets:
+            tk=m.get("ticker","")
+            if tk not in seen:
+                seen.add(tk)
+                uniq.append(m)
+        markets=uniq
+
         soccer=[]
         now_utc=datetime.utcnow()
         for m in markets:
@@ -125,52 +127,42 @@ def analyze():
                         continue
                 except:
                     pass
-            # Get price: first from market, then orderbook
             ya=None
             ya_raw=m.get("yes_ask")
             yb=m.get("yes_bid")
             lp=m.get("last_price")
-            if ya_raw not in [None,0,"0",""]:
-                try:
-                    ya=int(float(ya_raw))
-                except:
-                    pass
-            if ya is None and yb not in [None,0,"0",""]:
-                try:
-                    ya=int(float(yb))
-                except:
-                    pass
-            if ya is None and lp not in [None,0,"0",""]:
-                try:
-                    ya=int(float(lp))
-                except:
-                    pass
-            # If still None, try orderbook (for NEW-EVE 55%)
-            real_from_ob=False
-            if ya is None and ticker:
-                ob_price=get_orderbook_price(ticker)
-                if ob_price is not None and 5 <= ob_price <= 95:
-                    ya=ob_price
-                    real_from_ob=True
+            # Try all price fields + previous_yes_ask if exists
+            for v in [ya_raw, yb, lp, m.get("previous_yes_ask"), m.get("previous_price")]:
+                if v not in [None,0,"0",""]:
+                    try:
+                        ya=int(float(v))
+                        break
+                    except:
+                        continue
             if ya is None:
                 ya=50
             if not (5 <= ya <= 95):
                 continue
             team=team_name(m)
-            if not team:
+            if not team or team.lower() in ["yes","no","leon"]:
                 continue
             if len(team) <2:
                 continue
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            real= (ya_raw is not None and ya_raw!=0) or (yb is not None and yb!=0) or real_from_ob
-            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ticker":ticker,"exp":exp_str[5:16] if exp_str else "","vol":m.get("volume",0) or 0,"real":real})
+            # Real if any price field present
+            real= ya_raw not in [None,0,"0",""] or yb not in [None,0,"0",""] or lp not in [None,0,"0",""]
+            # Also check if volume >0 implies real
+            vol=m.get("volume",0) or 0
+            if vol>0:
+                real=True
+            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ticker":ticker,"exp":exp_str[5:16] if exp_str else "","vol":vol,"real":real})
 
         soccer.sort(key=lambda x: (x["real"], x["vol"]), reverse=True)
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
             real_cnt=sum(1 for s in soccer if s["real"])
-            send(f"V62 FINAL Orderbook - Total {len(markets)} Soccer {len(soccer)} (Real {real_cnt}) - NEW-EVE 55% should be LIVE")
+            send(f"V63 FINAL Soccer Series - Total {len(markets)} Soccer {len(soccer)} (Real {real_cnt}) - Series filter to catch NEW-EVE 55%")
 
         if soccer:
             by_team={}
@@ -185,13 +177,17 @@ def analyze():
                 o25=[x for x in lst if "2.5" in x["clean"]]
                 o35=[x for x in lst if "3.5" in x["clean"]]
                 if o25 and o35:
-                    a=min(o25, key=lambda x: x["over"])
-                    b=min(o35, key=lambda x: x["over"])
-                    middles.append((a,b))
+                    a=max(o25, key=lambda x: x["vol"] if x["real"] else 0)
+                    b=max(o35, key=lambda x: x["vol"] if x["real"] else 0)
+                    # Use real price if available
+                    if a["real"] or b["real"]:
+                        middles.append((a,b))
+                    else:
+                        middles.append((a,b))
 
             middles=sorted(middles, key=lambda x: x[0]["vol"], reverse=True)[:6]
             if middles:
-                msg=f"MIDDLE {now} - {len(soccer)} games - {len(middles)} Middle EPL Real\n\n"
+                msg=f"MIDDLE {now} - {len(soccer)} games - {len(middles)} Middle Series Filter\n\n"
                 for i,(a,b) in enumerate(middles,1):
                     tag="LIVE" if a["real"] or b["real"] else "EST"
                     msg+=f"{i}. {a['team']} [{tag}]\n   O2.5 {a['over']}c + U3.5 {b['under']}c (O3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 = both win | PRE 2 side | 15' U add | 70' JACKPOT O\n\n"
@@ -210,11 +206,11 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V62 starting orderbook for NEW-EVE 55%")
+    send("V63 starting series filter for NEW-EVE")
     while True:
         try:
             analyze()
-            time.sleep(240)
+            time.sleep(180)
         except Exception as e:
             print(e)
             time.sleep(60)
@@ -223,7 +219,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V62 running")
+        self.wfile.write(b"V63 running")
     def log_message(self,*a):
         pass
 
