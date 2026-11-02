@@ -9,7 +9,7 @@ BASE="https://api.elections.kalshi.com/trade-api/v2"
 
 def send(msg):
     try:
-        safe=msg.replace(" Kalshi","KLSH")
+        safe=msg.replace(" 【entity-Kalshi¦canonical_name=Kalshi】","KLSH")
         requests.post(f"https://api.telegram.org/bot{BOT}/sendMessage", data={"chat_id":CHAT,"text":safe}, timeout=15)
     except:
         pass
@@ -49,13 +49,18 @@ def analyze():
     try:
         markets=get_all()
         soccer=[]
-        now_utc=datetime.utcnow()
-        # မနက်ဖြန် date range
-        tomorrow=now_utc + timedelta(days=1)
-        tomorrow_start=datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0)
-        tomorrow_end=tomorrow_start + timedelta(days=1)
-        # ဥပမာ ဒီနေ့ 11-04 ဆို မနက်ဖြန် 11-05 00:00 - 23:59 ပွဲတွေပဲ
-        tomorrow_str=tomorrow_start.strftime("%Y-%m-%d")
+        # PST Timezone Fix - LA Time
+        utc_now=datetime.utcnow()
+        pst_now=utc_now - timedelta(hours=7)  # PST UTC-7 (PDT UTC-7)
+        # မနက်ဖြန် PST
+        tomorrow_pst=pst_now + timedelta(days=1)
+        tomorrow_start_pst=datetime(tomorrow_pst.year, tomorrow_pst.month, tomorrow_pst.day, 0, 0, 0)
+        tomorrow_end_pst=tomorrow_start_pst + timedelta(days=1)
+        # UTC နဲ့ ပြန်ပြောင်း filter လုပ်ဖို့
+        tomorrow_start_utc=tomorrow_start_pst + timedelta(hours=7)
+        tomorrow_end_utc=tomorrow_end_pst + timedelta(hours=7)
+        tomorrow_str=tomorrow_start_pst.strftime("%Y-%m-%d")
+        today_str_pst=pst_now.strftime("%Y-%m-%d")
 
         for m in markets:
             title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
@@ -75,11 +80,11 @@ def analyze():
                 continue
             try:
                 exp_dt=datetime.fromisoformat(exp.replace("Z",""))
-                # မနက်ဖြန်မှ ကန်မယ့် ပွဲတွေပဲ - ဒီနေ့ပြီးသွားတာ နဲ့ ဟိုး အဝေးကြီး skip
-                if exp_dt < tomorrow_start:
-                    continue  # ဒီနေ့ ပွဲ skip
-                if exp_dt >= tomorrow_end:
-                    continue  # သဘက်ခါ နဲ့ အဝေးကြီး ပွဲ skip
+                # မနက်ဖြန် PST ပွဲတွေပဲ
+                if exp_dt < tomorrow_start_utc:
+                    continue
+                if exp_dt >= tomorrow_end_utc:
+                    continue
             except:
                 continue
 
@@ -126,12 +131,12 @@ def analyze():
                 continue
 
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"exp":exp_dt.strftime("%H:%M"),"vol":m.get("volume",0) or 0,"exp_full":exp_dt})
+            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"exp":exp_dt.strftime("%m-%d %H:%M"),"vol":m.get("volume",0) or 0})
 
-        print(f"V72 TOMORROW total {len(markets)} soccer {len(soccer)} tomorrow {tomorrow_str}")
+        print(f"V73 PST total {len(markets)} soccer {len(soccer)} tomorrow PST {tomorrow_str} today PST {today_str_pst}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V72 TOMORROW ONLY - {tomorrow_str} - Total {len(markets)} Soccer TOMORROW {len(soccer)} - မနက်ဖြန် ပွဲတွေပဲ")
+            send(f"V73 PST Fix - Today PST {today_str_pst} Tomorrow PST {tomorrow_str} - Total {len(markets)} Soccer TOMORROW {len(soccer)} PST")
 
         if soccer:
             by_team={}
@@ -151,27 +156,24 @@ def analyze():
                     middles.append((a,b))
 
             if middles:
-                msg=f"TOMORROW {tomorrow_str} - {len(soccer)} games TOMORROW - {len(middles)} Middle\n\n"
+                msg=f"TOMORROW PST {tomorrow_str} - {len(soccer)} games - {len(middles)} Middle\n\n"
                 for i,(a,b) in enumerate(middles,1):
-                    msg+=f"{i}. {a['team']} TOMORROW {b['exp']}\n   O2.5 {a['over']}c + U3.5 {b['under']}c\n   Vol {b['vol']} | 3 = both win | PRE 2 side\n\n"
+                    msg+=f"{i}. {a['team']} {b['exp']} PST\n   O2.5 {a['over']}c + U3.5 {b['under']}c\n   Vol {b['vol']} | 3=win\n\n"
                 send(msg)
             else:
-                if soccer:
-                    msg=f"TOMORROW {tomorrow_str} - {len(soccer)} games TOMORROW - No middle\n\n"
-                    for s in sorted(soccer, key=lambda x: x["vol"], reverse=True)[:6]:
-                        msg+=f"{s['team']} O2.5 {s['over']}c Exp {s['exp']} Vol {s['vol']}\n"
-                    send(msg)
-                else:
-                    send(f"TOMORROW {tomorrow_str} - No games TOMORROW - ဒီနေ့ 8000 ထဲ မနက်ဖြန် ပွဲ မရှိဘူး")
+                msg=f"TOMORROW PST {tomorrow_str} - {len(soccer)} games - No middle\n\n"
+                for s in sorted(soccer, key=lambda x: x["vol"], reverse=True)[:6]:
+                    msg+=f"{s['team']} O2.5 {s['over']}c Exp {s['exp']} Vol {s['vol']}\n"
+                send(msg)
         else:
-            send(f"TOMORROW {tomorrow_str} - No soccer TOMORROW - မနက်ဖြန် ပွဲ မရှိဘူး, သဘက်ခါ ပွဲတွေပဲ ရှိတယ်")
+            send(f"TOMORROW PST {tomorrow_str} - No games tomorrow PST - Today PST {today_str_pst} မှာ 8000 ထဲ မနက်ဖြန် ပွဲ မရှိဘူး")
 
     except Exception as e:
         print(f"err {e}")
 
 def bot_loop():
     time.sleep(2)
-    send(f"V72 TOMORROW ONLY starting - မနက်ဖြန် ပွဲတွေပဲ")
+    send(f"V73 PST Fix starting - Tomorrow should be 11-02 PST")
     while True:
         try:
             analyze()
@@ -184,7 +186,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V72 TOMORROW running")
+        self.wfile.write(b"V73 PST running")
     def log_message(self,*a):
         pass
 
