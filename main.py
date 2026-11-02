@@ -9,24 +9,23 @@ BASE="https://api.elections.kalshi.com/trade-api/v2"
 
 def send(msg):
     try:
-        requests.post(f"https://api.telegram.org/bot{BOT}/sendMessage", data={"chat_id":CHAT,"text":msg[:3500].replace(" 【entity-Kalshi¦canonical_name=Kalshi】","KLSH")}, timeout=15)
+        requests.post(f"https://api.telegram.org/bot{BOT}/sendMessage", data={"chat_id":CHAT,"text":msg[:3500].replace(" Kalshi","KLSH")}, timeout=15)
     except:
         pass
 
 def get_all():
     all_m=[]
     cur=None
-    for i in range(40):  # 16k markets
+    for i in range(20):
         try:
             p={"status":"open","limit":400}
             if cur:
                 p["cursor"]=cur
-            r=requests.get(f"{BASE}/markets", params=p, timeout=20)
+            r=requests.get(f"{BASE}/markets", params=p, timeout=12)
             if r.status_code==429:
-                time.sleep(5)
+                time.sleep(4)
                 continue
             if r.status_code!=200:
-                print(f"batch {i} {r.status_code}")
                 break
             data=r.json()
             ms=data.get("markets",[])
@@ -34,12 +33,10 @@ def get_all():
                 break
             all_m.extend(ms)
             cur=data.get("cursor")
-            print(f"batch {i} got {len(ms)} total {len(all_m)}")
             if not cur:
                 break
-            time.sleep(0.35)
-        except Exception as e:
-            print(f"batch {i} err {e}")
+            time.sleep(0.4)
+        except:
             break
     return all_m
 
@@ -67,11 +64,6 @@ def analyze():
                 continue
             if "both teams to score" in tl or "wins by more than" in tl:
                 continue
-            # Must have goals scored or point total
-            if "goals scored" not in tl and "point total" not in tl and "total" not in tl:
-                # Keep if team name present
-                if "【entity-sassuolo¦canonical_name=Sassuolo】" not in tl and "【entity-fiorentina¦canonical_name=Fiorentina】" not in tl and "atalanta" not in tl and "【entity-newcastle¦canonical_name=newcastle】" not in tl and "【entity-everton¦canonical_name=everton】" not in tl and "cruz" not in tl:
-                    continue
             exp=m.get("expiration_time","")
             try:
                 exp_dt=datetime.fromisoformat(exp.replace("Z","")) if exp else None
@@ -94,38 +86,32 @@ def analyze():
                 ya=50
 
             team="SOC"
-            if "【entity-sassuolo¦canonical_name=Sassuolo】" in tl and "【entity-fiorentina¦canonical_name=Fiorentina】" in tl:
-                team="SAS-FIO"
-            elif "【entity-sassuolo¦canonical_name=Sassuolo】" in tl:
-                team="SAS-FIO" if "【entity-fiorentina¦canonical_name=Fiorentina】" in tl or "fio" in tl else "SAS"
-            elif "【entity-fiorentina¦canonical_name=Fiorentina】" in tl:
-                team="SAS-FIO"
-            elif "atalanta" in tl and "【entity-parma¦canonical_name=parma】" in tl:
+            if "sassuolo" in tl or "fiorentina" in tl:
+                if "sassuolo" in tl and "fiorentina" in tl:
+                    team="SAS-FIO"
+                elif "sassuolo" in tl:
+                    team="SAS-FIO"
+                else:
+                    team="SAS-FIO"
+            elif "atalanta" in tl or "parma" in tl:
                 team="ATA-PAR"
-            elif "atalanta" in tl:
-                team="ATA-PAR"
-            elif "【entity-parma¦canonical_name=parma】" in tl:
-                team="ATA-PAR"
-            elif "【entity-newcastle¦canonical_name=newcastle】" in tl and "【entity-everton¦canonical_name=everton】" in tl:
-                team="NEW-EVE"
-            elif "【entity-newcastle¦canonical_name=newcastle】" in tl:
-                team="NEW-EVE"
-            elif "【entity-everton¦canonical_name=everton】" in tl:
+            elif "newcastle" in tl or "everton" in tl:
                 team="NEW-EVE"
             elif "cruz" in tl:
                 team="CZ"
+
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            soccer_pt.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"exp_dt":exp_dt,"exp":exp_dt.strftime("%m-%d %H:%M"),"exp_pst":(exp_dt-timedelta(hours=7)).strftime("%m-%d %H:%M PST"),"vol":m.get("volume",0) or 0,"real":real,"tl":tl[:120]})
+            soccer_pt.append({"over":ya,"clean":clean,"team":team,"exp_dt":exp_dt,"exp":exp_dt.strftime("%m-%d %H:%M"),"exp_pst":(exp_dt-timedelta(hours=7)).strftime("%m-%d %H:%M PST"),"vol":m.get("volume",0) or 0,"real":real,"tl":tl[:100]})
 
         tomorrow_pt=[s for s in soccer_pt if tomorrow_start_utc <= s["exp_dt"] < tomorrow_end_utc]
-        sas_fio=[s for s in soccer_pt if "SAS" in s["team"] or "FIO" in s["team"]]
-        new_eve=[s for s in soccer_pt if "NEW" in s["team"] or "EVE" in s["team"]]
+        sas=[s for s in soccer_pt if "SAS" in s["team"]]
+        new=[s for s in soccer_pt if "NEW" in s["team"]]
 
-        print(f"V79 total {len(markets)} pt {len(soccer_pt)} tomorrow {len(tomorrow_pt)} SAS {len(sas_fio)} NEW {len(new_eve)}")
+        print(f"V80 total {len(markets)} pt {len(soccer_pt)} tomorrow {len(tomorrow_pt)} SAS {len(sas)} NEW {len(new)}")
 
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V79 16k Deep - Today PST {today_str} Tomorrow PST {tomorrow_str} - Total {len(markets)} PT {len(soccer_pt)} TomorrowPT {len(tomorrow_pt)} SAS-FIO {len(sas_fio)} NEW-EVE {len(new_eve)} - Screenshot 40% should be here")
+            send(f"V80 Light 8k - Today PST {today_str} Tomorrow PST {tomorrow_str} - Total {len(markets)} PT {len(soccer_pt)} TomorrowPT {len(tomorrow_pt)} SAS-FIO {len(sas)} NEW-EVE {len(new)} - Broad filter")
 
         if tomorrow_pt:
             by_team={}
@@ -143,34 +129,12 @@ def analyze():
                     b=max(o35, key=lambda x: (x["real"], x["vol"]))
                     middles.append((a,b))
             if middles:
-                msg=f"TOMORROW PST {tomorrow_str} - {len(tomorrow_pt)} PT - {len(middles)} Middle - Screenshot FOUND!\n"
+                msg=f"TOMORROW PST {tomorrow_str} - {len(tomorrow_pt)} PT - {len(middles)} Middle - Screenshot!\n"
                 for i,(a,b) in enumerate(middles,1):
                     tag="LIVE" if a["real"] else "EST"
                     msg+=f"{i}. {a['team']} [{tag}] {b['exp_pst']}\n   O2.5 {a['over']}c + U3.5 {b['under']}c (O3.5 {b['over']}c) Vol {b['vol']}\n"
                 send(msg)
             else:
-                msg=f"TOMORROW PST {tomorrow_str} - {len(tomorrow_pt)} PT - No middle, details:\n"
-                for s in tomorrow_pt[:8]:
-                    tag="LIVE" if s["real"] else "EST"
-                    msg+=f"{s['team']} [{tag}] {s['clean']} {s['over']}c {s['exp_pst']} Vol {s['vol']}\n {s['tl'][:50]}\n"
-                send(msg)
-        else:
-            # Still 0
-            if soccer_pt:
-                by_date={}
-                for s in soccer_pt:
-                    d=(s["exp_dt"]-timedelta(hours=7)).strftime("%m-%d")
-                    if d not in by_date:
-                        by_date[d]=[]
-                    by_date[d].append(s)
-                sd=sorted(by_date.keys())
-                msg=f"TOMORROW PST {tomorrow_str} - 0 PT in 16k - SAS {len(sas_fio)} NEW {len(new_eve)} - Dates {sd[:5]}\n"
-                for s in sas_fio[:3]:
-                    msg+=f"SAS-FIO {s['clean']} {s['over']}c {s['exp_pst']} Vol {s['vol']}\n"
-                send(msg)
-
-    except Exception as e:
-        print(f"err {e}")
-
-def bot_loop():
-    time.sleep(2
+                msg=f"TOMORROW PST {tomorrow_str} - {len(tomorrow_pt)} PT - No middle\n"
+                for s in tomorrow_pt[:6]:
+                   
