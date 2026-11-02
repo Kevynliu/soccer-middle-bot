@@ -1,5 +1,6 @@
 import os, time, requests, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
 
 BOT=os.getenv("BOT_TOKEN","").strip()
 CHAT=os.getenv("CHAT_ID","").strip()
@@ -39,34 +40,36 @@ def team_name(m):
     raw=y+" "+t
     if "cruz" in raw:
         return "CruzAzul"
-    if "tijuana" in raw:
-        return "Tijuana"
+    if "【entity-tijuana¦canonical_name=Club Tijuana】" in raw:
+        return "【entity-Tijuana¦canonical_name=Club Tijuana】"
     if "quilmes" in raw:
         return "Quilmes"
-    if "lanus" in raw:
-        return "Lanus"
-    if "vancouver" in raw:
-        return "Vancouver"
-    if "seattle" in raw:
-        return "Seattle"
-    if "nashville" in raw:
-        return "Nashville"
-    if "palmeiras" in raw:
-        return "Palmeiras"
-    if "gremio" in raw:
-        return "Gremio"
+    if "【entity-lanus¦canonical_name=Club Atlético Lanús】" in raw:
+        return "【entity-Lanus¦canonical_name=Club Atlético Lanús】"
+    if "【entity-vancouver¦canonical_name=Vancouver Whitecaps FC】" in raw:
+        return "【entity-Vancouver¦canonical_name=Vancouver Whitecaps FC】"
+    if "【entity-seattle¦canonical_name=Seattle Sounders FC】" in raw:
+        return "【entity-Seattle¦canonical_name=Seattle Sounders FC】"
+    if "【entity-nashville¦canonical_name=Nashville SC】" in raw:
+        return "【entity-Nashville¦canonical_name=Nashville SC】"
+    if "【entity-palmeiras¦canonical_name=Palmeiras】" in raw:
+        return "【entity-Palmeiras¦canonical_name=Palmeiras】"
+    if "【entity-gremio¦canonical_name=Grêmio FBPA】" in raw:
+        return "【entity-Gremio¦canonical_name=Grêmio FBPA】"
     if "los angeles" in raw and "miami" in raw:
         return "LAFCvsMIA"
     if "miami" in raw:
         return "MiamiTeam"
     return ""
 
+prev_prices={}
 def analyze():
     now=time.strftime("%H:%M:%S")
-    print(f"V52 {now}")
+    print(f"V56 {now}")
     try:
         markets=get_all()
         soccer=[]
+        now_utc=datetime.utcnow()
         for m in markets:
             title=(m.get("title","") or "")+" "+(m.get("subtitle","") or "")+" "+(m.get("yes_sub_title","") or "")
             tl=title.lower()
@@ -80,6 +83,15 @@ def analyze():
                 continue
             if "2.5" not in tl and "3.5" not in tl:
                 continue
+            # Ignore finished - exp < now
+            exp_str=m.get("expiration_time","")
+            if exp_str:
+                try:
+                    exp_dt=datetime.fromisoformat(exp_str.replace("Z",""))
+                    if exp_dt < now_utc:
+                        continue
+                except:
+                    pass
             ya=None
             for k in ["yes_ask","yes_bid","last_price"]:
                 v=m.get(k)
@@ -97,12 +109,21 @@ def analyze():
             if not team:
                 continue
             clean="Over 2.5" if "2.5" in tl else "Over 3.5"
-            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":m.get("event_ticker",""),"vol":m.get("volume",0),"exp":m.get("expiration_time","")[5:16] if m.get("expiration_time","") else ""})
+            # Live tracking
+            key=m.get("ticker","")+team
+            old=prev_prices.get(key)
+            if old is not None and abs(old-ya) >= 15:
+                if old >= 70 and ya <= 50:
+                    send(f"LIVE JACKPOT {now} - {team} {clean} {old}c -> {ya}c DOWN! BUY Over NOW for Middle!")
+                elif old <= 35 and ya >= 65:
+                    send(f"LIVE SPIKE {now} - {team} {clean} {old}c -> {ya}c UP! Goals early - Hold Under!")
+            prev_prices[key]=ya
+            soccer.append({"over":ya,"under":100-ya,"clean":clean,"team":team,"ev":m.get("event_ticker",""),"vol":m.get("volume",0),"exp":exp_str[5:16] if exp_str else ""})
 
         print(f"total {len(markets)} soccer {len(soccer)}")
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V52 FINAL No Tag Live - Total {len(markets)} Soccer {len(soccer)} Clean - Deploy ok")
+            send(f"V56 FINAL Live Tracking - Total {len(markets)} Soccer {len(soccer)} Clean - Finished filter + Live jackpot")
 
         if soccer:
             by_team={}
@@ -123,15 +144,9 @@ def analyze():
 
             middles=middles[:5]
             if middles:
-                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer Clean - {len(middles)} Middle\n\n"
+                msg=f"PRE-MATCH MIDDLE {now} - {len(soccer)} Soccer - {len(middles)} Middle (Finished filtered)\n\n"
                 for i,(a,b) in enumerate(middles,1):
-                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win | Pre buy - 15' Under add - 70' Jackpot Over\n\n"
-                send(msg)
-            else:
-                top=soccer[:5]
-                msg=f"PRE-MATCH {now} - {len(soccer)} Soccer - Middle waiting\n"
-                for s in top:
-                    msg+=f"{s['team']} {s['clean']} {s['over']}c Exp {s['exp']}\n"
+                    msg+=f"{i}. {a['team']}\n   Over 2.5 {a['over']}c + Under 3.5 {b['under']}c (Over 3.5 {b['over']}c)\n   Exp {b['exp']} Vol {b['vol']}\n   3 goals = both win | PRE 2 side | 15' 0-0 Under add | 70' Jackpot Over\n\n"
                 send(msg)
 
     except Exception as e:
@@ -139,7 +154,7 @@ def analyze():
 
 def bot_loop():
     time.sleep(3)
-    send("V52 starting")
+    send("V56 starting live tracking")
     while True:
         try:
             analyze()
@@ -152,7 +167,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V52 running")
+        self.wfile.write(b"V56 running")
     def log_message(self,*a):
         pass
 
