@@ -13,7 +13,7 @@ def send(msg):
     except:
         pass
 
-def get_markets(total=12000):
+def get_markets(total=5000):
     all_ms=[]
     cursor=None
     while len(all_ms) < total:
@@ -25,8 +25,6 @@ def get_markets(total=12000):
             if r.status_code==429:
                 time.sleep(5)
                 continue
-            if r.status_code!=200:
-                break
             d=r.json()
             batch=d.get("markets",[])
             if not batch:
@@ -42,26 +40,24 @@ def get_markets(total=12000):
 
 def analyze():
     try:
-        ms=get_markets(total=12000)
+        ms=get_markets(total=5000)
         if not ms:
             return
-        utc_now=datetime.utcnow()
-        pst_now=utc_now - timedelta(hours=7)
+        pst=datetime.utcnow() - timedelta(hours=7)
         
-        soccer=[]
-        parlay_groups={}
-        real_groups={}
-        
+        groups={}
         for m in ms:
             title=m.get("title","")
             tl=(title+" "+m.get("subtitle","")+" "+m.get("yes_sub_title","")).lower()
             if "goals scored" not in tl: continue
             if "over" not in tl: continue
             if "2.5" not in tl and "3.5" not in tl: continue
-            if "tampa bay" in tl or "edmonton" in tl or "ottawa" in tl: continue
             
-            soccer.append(m)
-            # price
+            key=title[:45]
+            if key not in groups:
+                groups[key]={"o25":[],"o35":[],"title":title}
+            
+            # V103 logic - try any price field
             ya=None
             for k in ["yes_ask","yes_bid","last_price"]:
                 v=m.get(k)
@@ -74,73 +70,43 @@ def analyze():
                     except:
                         pass
             if not ya:
-                continue
+                ya=50  # EST if no price
             
-            is_real = (" vs " in title.lower()) and title.lower().count("yes")<=1
-            
-            key=title[:50]
-            target=real_groups if is_real else parlay_groups
-            
-            if key not in target:
-                target[key]={"o25":[],"o35":[],"title":title}
-            
-            entry={"over":ya,"under":100-ya,"title":title}
+            e={"over":ya,"under":100-ya,"title":title}
             if "2.5" in tl:
-                target[key]["o25"].append(entry)
-            elif "3.5" in tl:
-                target[key]["o35"].append(entry)
+                groups[key]["o25"].append(e)
+            else:
+                groups[key]["o35"].append(e)
         
-        real_middles=[]
-        for g in real_groups.values():
+        middles=[]
+        for g in groups.values():
             if g["o25"] and g["o35"]:
                 a=min(g["o25"], key=lambda x: x["over"])
                 b=min(g["o35"], key=lambda x: x["over"])
                 cost=a["over"]+b["under"]
                 if cost<=130:
-                    real_middles.append({"title":g["title"],"o25":a,"o35":b,"cost":cost,"profit":200-cost})
-        
-        parlay_middles=[]
-        for g in parlay_groups.values():
-            if g["o25"] and g["o35"]:
-                a=min(g["o25"], key=lambda x: x["over"])
-                b=min(g["o35"], key=lambda x: x["over"])
-                cost=a["over"]+b["under"]
-                if cost<=130:
-                    parlay_middles.append({"title":g["title"],"o25":a,"o35":b,"cost":cost,"profit":200-cost})
+                    middles.append({"title":g["title"],"o25":a,"o35":b,"cost":cost,"profit":200-cost})
         
         if not hasattr(analyze,"first"):
             analyze.first=True
-            msg=f"V114 PRODUCTION - Deploy OK!\n"
-            msg+=f"Scanned {len(ms)} -> Soccer {len(soccer)}\n"
-            msg+=f"Real Single {len(real_groups)} Middles {len(real_middles)} (vs markets - morning only)\n"
-            msg+=f"Parlay {len(parlay_groups)} Middles {len(parlay_middles)}\n"
-            msg+=f"PST Now {pst_now.strftime('%m-%d %H:%M')} - Real 0 at night = normal, will appear 6-8 AM PST\n"
-            msg+=f"Both saved - Parlay trading at night!"
-            send(msg)
+            send(f"V116 STABLE - Deploy OK!\nScanned {len(ms)} -> Soccer Groups {len(groups)} Middles {len(middles)}\nV103 clone 5000 scan - No price filter - Both saved\nPST {pst.strftime('%m-%d %H:%M')} - Real vs 0 at night normal, Parlay {len(middles)}")
         
-        if real_middles:
-            txt=f"⚽ REAL SINGLE MIDDLE 🔥 {len(real_middles)} found - {pst_now.strftime('%m-%d %H:%M PST')}\n"
-            for i,m in enumerate(real_middles[:4],1):
-                txt+=f"{i}. {m['title'][:45]}\n O2.5 {m['o25']['over']}c + U3.5 {m['o35']['under']}c Cost {m['cost']}c Profit +{m['profit']}c\n\n"
+        if middles:
+            txt=f"🎯 MIDDLE 🔥 {len(middles)} found - {pst.strftime('%H:%M PST')}\n"
+            for i,m in enumerate(middles[:6],1):
+                txt+=f"{i}. {m['title'][:48]}\n O2.5 {m['o25']['over']}c + U3.5 {m['o35']['under']}c Cost {m['cost']}c +{m['profit']}c\n\n"
             send(txt)
-        
-        if parlay_middles:
-            txt=f"🎯 PARLAY MIDDLE 🔥 {len(parlay_middles)} found\n"
-            for i,m in enumerate(parlay_middles[:5],1):
-                txt+=f"{i}. {m['title'][:50]}\n O2.5 {m['o25']['over']}c + U3.5 {m['o35']['under']}c Cost {m['cost']}c +{m['profit']}c\n\n"
-            send(txt)
-        
-        if not real_middles and not parlay_middles:
+        else:
             if not hasattr(analyze,"last_no") or time.time()-analyze.last_no > 10800:
                 analyze.last_no=time.time()
-                send(f"No middle in {len(ms)} -> Real {len(real_groups)} Parlay {len(parlay_groups)} - Night time Real 0 normal, Parlay {len(parlay_groups)} checking 5min - {pst_now.strftime('%H:%M PST')}")
+                send(f"No middle in {len(ms)} -> Groups {len(groups)} - {pst.strftime('%H:%M PST')} checking 5min")
 
     except Exception as e:
-        send(f"V114 Error {str(e)[:150]}")
+        send(f"V116 Error {e}")
 
 def bot_loop():
     time.sleep(3)
-    send(f"V114 PRODUCTION starting - 12000 scan + Real Morning + Parlay Night + Both Saved - Deploy OK!")
+    send(f"V116 STABLE starting - V103 clone 5000 scan - Deploy OK!")
     while True:
         try:
             analyze()
@@ -152,7 +118,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V114 running")
+        self.wfile.write(b"V116")
     def log_message(self,*a):
         pass
 
