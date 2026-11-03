@@ -38,30 +38,6 @@ def get_markets(total=5000):
             break
     return all_ms
 
-def get_ob_price(ticker):
-    try:
-        r=requests.get(f"{BASE}/markets/{ticker}/orderbook", timeout=8)
-        if r.status_code!=200:
-            return None, f"HTTP {r.status_code}"
-        j=r.json()
-        ob=j.get("orderbook",{})
-        # Try all formats
-        for k in ["yes_dollars","yes","yes_bids"]:
-            arr=ob.get(k,[])
-            if arr and len(arr)>0:
-                try:
-                    first=arr[0]
-                    price_str=str(first[0] if isinstance(first,(list,tuple)) else first)
-                    fv=float(price_str)
-                    price=int(fv*100) if fv<=1 else int(fv)
-                    if 0 < price < 100:
-                        return price, f"{k}={price_str}"
-                except:
-                    pass
-        return None, f"no price keys {list(ob.keys())[:3]}"
-    except Exception as e:
-        return None, str(e)[:60]
-
 def analyze():
     try:
         ms=get_markets(total=5000)
@@ -70,16 +46,31 @@ def analyze():
         pst=datetime.utcnow() - timedelta(hours=7)
         
         groups={}
+        total_goals=0
+        with_vol=0
+        cross=0
+        
         for m in ms:
             title=m.get("title","")
             tl=(title+" "+m.get("subtitle","")+" "+m.get("yes_sub_title","")).lower()
             if "goals scored" not in tl: continue
+            total_goals+=1
+            
+            if "crosscategory" in m.get("ticker","").lower():
+                cross+=1
+            
+            vol=m.get("volume",0) or 0
+            if vol>0:
+                with_vol+=1
+            
             if "over 2.5" not in tl and "over 3.5" not in tl: continue
+            
             key=title[:45]
             if key not in groups:
                 groups[key]={"o25":[],"o35":[],"title":title}
-            ticker=m.get("ticker","")
+            
             ya=None
+            source="None"
             for k in ["yes_ask","yes_bid","last_price"]:
                 v=m.get(k)
                 if v not in [None,"",0]:
@@ -87,68 +78,64 @@ def analyze():
                         fv=float(v)
                         ya=int(fv) if fv>1 else int(fv*100)
                         if 0 < ya < 100:
+                            source=k
                             break
                     except:
                         pass
-            e={"over":ya,"ticker":ticker,"vol":m.get("volume",0) or 0}
+            
+            e={"over":ya,"vol":vol,"source":source,"ticker":m.get("ticker","")[:30]}
             if "over 2.5" in tl:
                 groups[key]["o25"].append(e)
             else:
                 groups[key]["o35"].append(e)
         
         pairs=[]
+        valid_pairs=[]
         for g in groups.values():
             if g["o25"] and g["o35"]:
-                a=max(g["o25"], key=lambda x: x["vol"] or 0)
-                b=max(g["o35"], key=lambda x: x["vol"] or 0)
-                pairs.append((g["title"],a,b))
+                pairs.append(g)
+                # Check if has real price and volume
+                has_price = any(x["over"] for x in g["o25"]+g["o35"])
+                has_vol = sum(x["vol"] for x in g["o25"]+g["o35"]) > 0
+                if has_price and has_vol:
+                    valid_pairs.append(g)
         
         if not hasattr(analyze,"first"):
             analyze.first=True
-            msg=f"V118 REAL - Deploy OK!\nScanned {len(ms)} -> Groups {len(groups)} Pairs {len(pairs)}\nTesting orderbook for 3 tickers..."
+            msg=f"V119 REALITY - Deploy OK!\n"
+            msg+=f"Scanned {len(ms)} -> goals scored {total_goals}\n"
+            msg+=f"CrossCategory {cross} With Volume {with_vol}\n"
+            msg+=f"Over 2.5/3.5 Groups {len(groups)} Pairs {len(pairs)} Valid {len(valid_pairs)}\n"
+            msg+=f"PST {pst.strftime('%m-%d %H:%M')} - Night liquidity 0\n\n"
+            if pairs:
+                msg+=f"Sample pairs (no liquidity at night):\n"
+                for g in pairs[:2]:
+                    o25=g["o25"][0]
+                    o35=g["o35"][0]
+                    msg+=f"{g['title'][:40]}\n O2.5 {o25['over']} {o25['source']} vol {o25['vol']} | O3.5 {o35['over']} {o35['source']} vol {o35['vol']}\n\n"
+            msg+=f"Real Single vs games morning 6-8 AM PST only!"
             send(msg)
-            
-            # DEBUG 3 tickers orderbook
-            debug_txt=""
-            for i,(title,a,b) in enumerate(pairs[:3]):
-                price_a, info_a = get_ob_price(a["ticker"])
-                time.sleep(1)
-                price_b, info_b = get_ob_price(b["ticker"])
-                time.sleep(1)
-                debug_txt+=f"{i+1}. {title[:35]}\n O2.5 {a['ticker'][:25]} -> {price_a} ({info_a})\n U3.5 {b['ticker'][:25]} -> {price_b} ({info_b})\n\n"
-            
-            send(f"V118 Orderbook DEBUG:\n{debug_txt[:1000]}")
             return
         
-        # Normal loop - only 3 orderbook calls per cycle
-        real_middles=[]
-        for title,a,b in pairs[:3]:
-            o25=a["over"] or get_ob_price(a["ticker"])[0]
-            time.sleep(1)
-            o35=b["over"] or get_ob_price(b["ticker"])[0]
-            time.sleep(1)
-            
-            if o25 and o35:
-                cost=o25 + (100-o35)
-                if 60 <= cost <= 135:
-                    real_middles.append({"title":title,"o25":o25,"o35":o35,"cost":cost,"profit":200-cost})
-        
-        if real_middles:
-            txt=f"⚽ LIVE MIDDLE 🔥 {len(real_middles)} - {pst.strftime('%H:%M PST')}\n"
-            for i,m in enumerate(real_middles[:4],1):
-                txt+=f"{i}. {m['title'][:42]}\n O2.5 {m['o25']}c + U3.5 {100-m['o35']}c Cost {m['cost']}c +{m['profit']}c LIVE\n\n"
+        if valid_pairs:
+            txt=f"⚽ LIVE MIDDLE 🔥 {len(valid_pairs)} - {pst.strftime('%H:%M PST')}\n"
+            for g in valid_pairs[:4]:
+                a=max(g["o25"], key=lambda x: x["vol"] or 0)
+                b=max(g["o35"], key=lambda x: x["vol"] or 0)
+                cost=a["over"]+(100-b["over"]) if a["over"] and b["over"] else 100
+                txt+=f"{g['title'][:42]}\n O2.5 {a['over']}c ({a['source']}) + U3.5 {100-b['over'] if b['over'] else 50}c Cost {cost}c vol {a['vol']+b['vol']}\n\n"
             send(txt)
         else:
             if not hasattr(analyze,"last_no") or time.time()-analyze.last_no > 3600:
                 analyze.last_no=time.time()
-                send(f"No LIVE middle - Pairs {len(pairs)} Groups {len(groups)} - {pst.strftime('%H:%M PST')} - Orderbook 429 or no liquidity, checking 5min")
+                send(f"No liquid middle - {len(ms)} scan -> {total_goals} goals scored, {cross} cross-category, {with_vol} with volume, {len(pairs)} pairs but 0 liquid - Night 11 PM PST = 0 liquidity normal - Real vs games 6-8 AM PST - {pst.strftime('%H:%M')}")
 
     except Exception as e:
-        send(f"V118 Error {str(e)[:150]}")
+        send(f"V119 Error {str(e)[:150]}")
 
 def bot_loop():
     time.sleep(3)
-    send(f"V118 REAL starting - 5000 scan + Over 2.5/3.5 + Orderbook 3 DEBUG - Deploy OK!")
+    send(f"V119 REALITY starting - 5000 scan + Volume + Liquidity check - Deploy OK!")
     while True:
         try:
             analyze()
@@ -160,7 +147,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V118")
+        self.wfile.write(b"V119")
     def log_message(self,*a):
         pass
 
