@@ -13,7 +13,7 @@ def send(msg):
     except:
         pass
 
-def get_markets(total=5000):
+def get_markets(total=12000):
     all_ms=[]
     cursor=None
     while len(all_ms) < total:
@@ -33,21 +33,24 @@ def get_markets(total=5000):
             if not cursor or len(all_ms)>=total:
                 break
             time.sleep(0.6)
-        except Exception as e:
+        except:
             break
     return all_ms
 
 def analyze():
     try:
-        ms=get_markets(total=5000)
+        ms=get_markets(total=12000)
         if not ms:
             return
         utc_now=datetime.utcnow()
-        # V103 clone logic - NO price filter for counting
+        pst_now=utc_now - timedelta(hours=7)
+        tomorrow_pst=pst_now + timedelta(days=1)
+        
         all_soccer=[]
         real=[]
         parlay=[]
-        no_price=0
+        vs_count=0
+        no_vs=[]
         
         for m in ms:
             title=m.get("title","")
@@ -58,94 +61,95 @@ def analyze():
             
             all_soccer.append(m)
             
-            # Try get price - ANY field
-            ya=None
-            for k in ["yes_ask","yes_bid","last_price","yes_ask_dollars","price"]:
+            # Real = must have vs AND not many yes
+            has_vs = " vs " in title.lower() or " vs. " in title.lower() or " v " in title.lower()
+            yes_count = title.lower().count("yes ")
+            
+            if has_vs:
+                vs_count+=1
+            
+            # Price
+            ya=50
+            has_real_price=False
+            for k in ["yes_ask","yes_bid"]:
                 v=m.get(k)
                 if v not in [None,"",0]:
                     try:
-                        if isinstance(v,str):
-                            v=float(v)
-                        if v>1:
-                            ya=int(v) if v>1 else int(v*100)
+                        fv=float(v)
+                        if fv>1:
+                            ya=int(fv)
                         else:
-                            ya=int(v*100)
+                            ya=int(fv*100)
                         if 0 < ya < 100:
+                            has_real_price=True
                             break
                     except:
-                        continue
-            if not ya:
-                no_price+=1
-                ya=50  # temp for counting
+                        pass
             
-            entry={"over":ya,"under":100-ya,"vol":m.get("volume",0) or 0,"title":title,"tl":tl,"exp":m.get("expiration_time","")[:16],"has_price": m.get("yes_ask") is not None}
+            entry={"over":ya,"title":title,"tl":tl,"has_vs":has_vs,"yes_count":yes_count,"has_price":has_real_price,"exp":m.get("expiration_time","")[:16]}
             
-            # Real vs Parlay - V110 shows first 1000 all parlay
-            is_parlay = title.lower().count("yes")>=2 or title.count(",")>=2 or title.count(",yes")>=1
-            if is_parlay:
+            if has_vs and yes_count<=1:
+                real.append(entry)
+            elif yes_count>=2 or title.count(",")>=2:
                 parlay.append(entry)
             else:
-                real.append(entry)
+                no_vs.append(entry)
 
-        # Group for middle
-        def group_mid(arr):
+        def count_middles(arr):
             g={}
             for s in arr:
-                key=s["title"][:40]
+                key=s["title"][:45]
                 if key not in g:
-                    g[key]={"o25":[],"o35":[],"title":s["title"]}
+                    g[key]={"o25":[],"o35":[]}
                 if "2.5" in s["tl"]:
                     g[key]["o25"].append(s)
                 elif "3.5" in s["tl"]:
                     g[key]["o35"].append(s)
-            middles=0
+            mid=0
             for v in g.values():
                 if v["o25"] and v["o35"]:
-                    middles+=1
-            return len(g), middles
+                    mid+=1
+            return len(g), mid
 
-        real_games, real_mid = group_mid(real)
-        par_games, par_mid = group_mid(parlay)
+        real_g, real_mid = count_middles(real)
+        par_g, par_mid = count_middles(parlay)
+        other_g, other_mid = count_middles(no_vs)
 
         if not hasattr(analyze,"first"):
             analyze.first=True
-            msg=f"V112 BOTH - Deploy OK!\n"
-            msg+=f"Scanned {len(ms)} -> Total Soccer {len(all_soccer)} (V103 had 94 in 1000)\n"
-            msg+=f"Real Single {len(real)} Games {real_games} Middles {real_mid}\n"
-            msg+=f"Parlay {len(parlay)} Games {par_games} Middles {par_mid}\n"
-            msg+=f"No Price: {no_price} (markets endpoint yes_ask=None)\n\n"
-            msg+=f"Sample Real:\n"
-            for r in real[:2]:
-                msg+=f"{r['title'][:50]}\n"
-            msg+=f"\nSample Parlay:\n"
-            for p in parlay[:2]:
-                msg+=f"{p['title'][:50]}\n"
-            msg+=f"\nBoth saved!"
+            msg=f"V113 DEEP 12k - Deploy OK!\n"
+            msg+=f"Scanned {len(ms)} -> Total Soccer {len(all_soccer)}\n"
+            msg+=f"Real (vs + yes<=1) {len(real)} Games {real_g} Middles {real_mid}\n"
+            msg+=f"Parlay {len(parlay)} Games {par_g} Middles {par_mid}\n"
+            msg+=f"Other (no vs, no parlay) {len(no_vs)} Games {other_g}\n"
+            msg+=f"Has 'vs' in title: {vs_count}\n\n"
+            msg+=f"Sample Real vs:\n"
+            for r in real[:3]:
+                msg+=f"{r['title'][:55]}\n"
+            msg+=f"\nSample Other:\n"
+            for r in no_vs[:3]:
+                msg+=f"{r['title'][:55]}\n"
+            msg+=f"\nTomorrow {tomorrow_pst.strftime('%m-%d')} PST - Real 0 = markets not listed yet (12-24h before game)"
             send(msg)
 
-        if real_mid==0 and par_mid==0 and len(all_soccer)>0:
-            if not hasattr(analyze,"last_no") or time.time()-analyze.last_no > 3600:
-                analyze.last_no=time.time()
-                send(f"No middle yet - Scanned {len(ms)} -> Real {len(real)} Parlay {len(parlay)} Total {len(all_soccer)} - V103 clone, checking 5min")
-
     except Exception as e:
-        send(f"V112 Error {str(e)[:200]}")
+        send(f"V113 Error {str(e)[:200]}")
 
 def bot_loop():
     time.sleep(3)
-    send(f"V112 BOTH starting - V103 clone + 5000 scan + Price fix - Deploy OK!")
+    send(f"V113 DEEP starting - 12000 scan + vs filter + Tomorrow check - Deploy OK!")
     while True:
         try:
             analyze()
-            time.sleep(300)
+            time.sleep(600)
         except:
-            time.sleep(300)
+            time.sleep(600)
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V112 running")
+        self.wfile.write(b"V113 running")
     def log_message(self,*a):
         pass
 
