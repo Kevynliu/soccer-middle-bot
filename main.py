@@ -33,30 +33,34 @@ def get_markets(total=5000):
             cursor=d.get("cursor")
             if not cursor or len(all_ms)>=total:
                 break
-            time.sleep(0.6)
+            time.sleep(0.5)
         except:
             break
     return all_ms
 
-def get_ob(ticker):
+def get_ob_price(ticker):
     try:
-        r=requests.get(f"{BASE}/markets/{ticker}/orderbook", timeout=10)
+        r=requests.get(f"{BASE}/markets/{ticker}/orderbook", timeout=8)
         if r.status_code!=200:
-            return None
-        ob=r.json().get("orderbook",{})
-        for k in ["yes_dollars","yes"]:
-            arr=ob.get(k)
+            return None, f"HTTP {r.status_code}"
+        j=r.json()
+        ob=j.get("orderbook",{})
+        # Try all formats
+        for k in ["yes_dollars","yes","yes_bids"]:
+            arr=ob.get(k,[])
             if arr and len(arr)>0:
-                v=arr[0]
-                price_str=str(v[0] if isinstance(v,(list,tuple)) else v)
                 try:
+                    first=arr[0]
+                    price_str=str(first[0] if isinstance(first,(list,tuple)) else first)
                     fv=float(price_str)
-                    return int(fv*100) if fv<=1 else int(fv)
+                    price=int(fv*100) if fv<=1 else int(fv)
+                    if 0 < price < 100:
+                        return price, f"{k}={price_str}"
                 except:
                     pass
-    except:
-        pass
-    return None
+        return None, f"no price keys {list(ob.keys())[:3]}"
+    except Exception as e:
+        return None, str(e)[:60]
 
 def analyze():
     try:
@@ -70,14 +74,10 @@ def analyze():
             title=m.get("title","")
             tl=(title+" "+m.get("subtitle","")+" "+m.get("yes_sub_title","")).lower()
             if "goals scored" not in tl: continue
-            # FIX: Only 2.5 and 3.5, not 0.5/1.5
-            if "over 2.5" not in tl and "over 3.5" not in tl:
-                continue
-            
+            if "over 2.5" not in tl and "over 3.5" not in tl: continue
             key=title[:45]
             if key not in groups:
                 groups[key]={"o25":[],"o35":[],"title":title}
-            
             ticker=m.get("ticker","")
             ya=None
             for k in ["yes_ask","yes_bid","last_price"]:
@@ -90,14 +90,12 @@ def analyze():
                             break
                     except:
                         pass
-            
             e={"over":ya,"ticker":ticker,"vol":m.get("volume",0) or 0}
             if "over 2.5" in tl:
                 groups[key]["o25"].append(e)
-            elif "over 3.5" in tl:
+            else:
                 groups[key]["o35"].append(e)
         
-        # Find pairs
         pairs=[]
         for g in groups.values():
             if g["o25"] and g["o35"]:
@@ -107,47 +105,50 @@ def analyze():
         
         if not hasattr(analyze,"first"):
             analyze.first=True
-            send(f"V117 REAL PRICE - Deploy OK!\nScanned {len(ms)} -> Groups {len(groups)} Pairs {len(pairs)}\nFilter Over 2.5/3.5 only (not 0.5/1.5)\nFetching orderbook for top 10...")
+            msg=f"V118 REAL - Deploy OK!\nScanned {len(ms)} -> Groups {len(groups)} Pairs {len(pairs)}\nTesting orderbook for 3 tickers..."
+            send(msg)
+            
+            # DEBUG 3 tickers orderbook
+            debug_txt=""
+            for i,(title,a,b) in enumerate(pairs[:3]):
+                price_a, info_a = get_ob_price(a["ticker"])
+                time.sleep(1)
+                price_b, info_b = get_ob_price(b["ticker"])
+                time.sleep(1)
+                debug_txt+=f"{i+1}. {title[:35]}\n O2.5 {a['ticker'][:25]} -> {price_a} ({info_a})\n U3.5 {b['ticker'][:25]} -> {price_b} ({info_b})\n\n"
+            
+            send(f"V118 Orderbook DEBUG:\n{debug_txt[:1000]}")
+            return
         
+        # Normal loop - only 3 orderbook calls per cycle
         real_middles=[]
-        for title,a,b in pairs[:10]:
-            # Try markets price first, then orderbook
-            o25=a["over"]
-            o35=b["over"]
+        for title,a,b in pairs[:3]:
+            o25=a["over"] or get_ob_price(a["ticker"])[0]
+            time.sleep(1)
+            o35=b["over"] or get_ob_price(b["ticker"])[0]
+            time.sleep(1)
             
-            if not o25:
-                o25=get_ob(a["ticker"])
-                time.sleep(0.8)
-            if not o35:
-                o35=get_ob(b["ticker"])
-                time.sleep(0.8)
-            
-            if o25 and o35 and 0 < o25 < 100 and 0 < o35 < 100:
+            if o25 and o35:
                 cost=o25 + (100-o35)
                 if 60 <= cost <= 135:
                     real_middles.append({"title":title,"o25":o25,"o35":o35,"cost":cost,"profit":200-cost})
         
         if real_middles:
-            txt=f"⚽ REAL MIDDLE 🔥 {len(real_middles)} LIVE PRICE - {pst.strftime('%H:%M PST')}\n"
-            for i,m in enumerate(real_middles[:5],1):
-                txt+=f"{i}. {m['title'][:45]}\n O2.5 {m['o25']}c + U3.5 {100-m['o35']}c Cost {m['cost']}c Profit +{m['profit']}c LIVE\n\n"
+            txt=f"⚽ LIVE MIDDLE 🔥 {len(real_middles)} - {pst.strftime('%H:%M PST')}\n"
+            for i,m in enumerate(real_middles[:4],1):
+                txt+=f"{i}. {m['title'][:42]}\n O2.5 {m['o25']}c + U3.5 {100-m['o35']}c Cost {m['cost']}c +{m['profit']}c LIVE\n\n"
             send(txt)
         else:
-            if pairs:
-                # Show why no middle - price missing
-                if not hasattr(analyze,"last_no") or time.time()-analyze.last_no > 3600:
-                    analyze.last_no=time.time()
-                    sample_price=[]
-                    for _,a,b in pairs[:3]:
-                        sample_price.append(f"O2.5 price {a['over']} ticker {a['ticker'][:20]} O3.5 price {b['over']}")
-                    send(f"Found {len(pairs)} pairs but no LIVE price in markets endpoint\nNeed orderbook - {sample_price[0][:80] if sample_price else ''}\nChecking 5min - {pst.strftime('%H:%M PST')}")
+            if not hasattr(analyze,"last_no") or time.time()-analyze.last_no > 3600:
+                analyze.last_no=time.time()
+                send(f"No LIVE middle - Pairs {len(pairs)} Groups {len(groups)} - {pst.strftime('%H:%M PST')} - Orderbook 429 or no liquidity, checking 5min")
 
     except Exception as e:
-        send(f"V117 Error {str(e)[:200]}")
+        send(f"V118 Error {str(e)[:150]}")
 
 def bot_loop():
     time.sleep(3)
-    send(f"V117 REAL PRICE starting - Over 2.5/3.5 only + Orderbook LIVE - Deploy OK!")
+    send(f"V118 REAL starting - 5000 scan + Over 2.5/3.5 + Orderbook 3 DEBUG - Deploy OK!")
     while True:
         try:
             analyze()
@@ -159,7 +160,7 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V117")
+        self.wfile.write(b"V118")
     def log_message(self,*a):
         pass
 
