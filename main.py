@@ -7,135 +7,149 @@ CHAT=os.getenv("CHAT_ID","").strip()
 PORT=int(os.getenv("PORT","10000"))
 BASE="https://api.elections.kalshi.com/trade-api/v2"
 
-def send(msg):
+def send(m):
     try:
-        requests.post(f"https://api.telegram.org/bot{BOT}/sendMessage", data={"chat_id":CHAT,"text":msg[:3500]}, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{BOT}/sendMessage", data={"chat_id":CHAT,"text":m[:3500]}, timeout=10)
     except:
         pass
 
 def get_markets(total=5000):
-    all_ms=[]
-    cursor=None
-    while len(all_ms) < total:
+    all_m=[]
+    cur=None
+    for _ in range(5):
         try:
             p={"status":"open","limit":1000}
-            if cursor:
-                p["cursor"]=cursor
+            if cur:
+                p["cursor"]=cur
             r=requests.get(f"{BASE}/markets", params=p, timeout=20)
             if r.status_code==429:
-                time.sleep(5)
+                time.sleep(6)
                 continue
             d=r.json()
-            batch=d.get("markets",[])
-            if not batch:
+            b=d.get("markets",[])
+            if not b:
                 break
-            all_ms.extend(batch)
-            cursor=d.get("cursor")
-            if not cursor or len(all_ms)>=total:
+            all_m.extend(b)
+            cur=d.get("cursor")
+            if not cur or len(all_m)>=total:
                 break
-            time.sleep(0.5)
+            time.sleep(0.6)
         except:
             break
-    return all_ms
+    return all_m
+
+def price(m):
+    for k in ["yes_ask","yes_bid","last_price"]:
+        v=m.get(k)
+        if v not in [None,"",0]:
+            try:
+                fv=float(v)
+                c=int(fv) if fv>1 else int(fv*100)
+                if 0 < c < 100:
+                    return c,k
+            except:
+                pass
+    return None,"None"
 
 def analyze():
     try:
-        ms=get_markets(total=5000)
+        ms=get_markets(5000)
         if not ms:
             return
-        pst=datetime.utcnow() - timedelta(hours=7)
+        pst=datetime.utcnow()-timedelta(hours=7)
+        now=datetime.utcnow()
         
         groups={}
-        total_goals=0
-        with_vol=0
+        tot=0
         cross=0
+        expired=0
         
         for m in ms:
-            title=m.get("title","")
-            tl=(title+" "+m.get("subtitle","")+" "+m.get("yes_sub_title","")).lower()
-            if "goals scored" not in tl: continue
-            total_goals+=1
+            # expired filter
+            exp=m.get("close_time") or m.get("expiration_time") or ""
+            try:
+                if exp:
+                    exp_dt=datetime.fromisoformat(exp.replace("Z","+00:00"))
+                    if exp_dt.replace(tzinfo=None) < now - timedelta(hours=1):
+                        expired+=1
+                        continue
+            except:
+                pass
             
+            t=(m.get("title","")+" "+m.get("subtitle","")+" "+m.get("yes_sub_title","")).lower()
+            if "goals scored" not in t:
+                continue
+            tot+=1
             if "crosscategory" in m.get("ticker","").lower():
                 cross+=1
             
-            vol=m.get("volume",0) or 0
-            if vol>0:
-                with_vol+=1
+            # skip hockey garbage
+            if any(x in t for x in ["anaheim","carolina","tampa","edmonton","ottawa","both teams to score"]):
+                continue
             
-            if "over 2.5" not in tl and "over 3.5" not in tl: continue
+            # soccer only: must have over 2.5 or 3.5
+            if "over 2.5" not in t and "over 3.5" not in t:
+                continue
             
-            key=title[:45]
+            key=m.get("title","")[:50]
             if key not in groups:
-                groups[key]={"o25":[],"o35":[],"title":title}
+                groups[key]={"o25":[],"o35":[],"title":m.get("title","")}
             
-            ya=None
-            source="None"
-            for k in ["yes_ask","yes_bid","last_price"]:
-                v=m.get(k)
-                if v not in [None,"",0]:
-                    try:
-                        fv=float(v)
-                        ya=int(fv) if fv>1 else int(fv*100)
-                        if 0 < ya < 100:
-                            source=k
-                            break
-                    except:
-                        pass
-            
-            e={"over":ya,"vol":vol,"source":source,"ticker":m.get("ticker","")[:30]}
-            if "over 2.5" in tl:
+            c,src=price(m)
+            vol=m.get("volume",0) or 0
+            e={"c":c,"src":src,"vol":vol,"tk":m.get("ticker","")[:32]}
+            if "over 2.5" in t:
                 groups[key]["o25"].append(e)
             else:
                 groups[key]["o35"].append(e)
         
         pairs=[]
-        valid_pairs=[]
         for g in groups.values():
             if g["o25"] and g["o35"]:
-                pairs.append(g)
-                # Check if has real price and volume
-                has_price = any(x["over"] for x in g["o25"]+g["o35"])
-                has_vol = sum(x["vol"] for x in g["o25"]+g["o35"]) > 0
-                if has_price and has_vol:
-                    valid_pairs.append(g)
+                a=max(g["o25"], key=lambda x: (x["c"] is not None, x["vol"] or 0))
+                b=max(g["o35"], key=lambda x: (x["c"] is not None, x["vol"] or 0))
+                if a["c"] and b["c"]:
+                    cost=a["c"]+(100-b["c"])
+                    if cost<=125:
+                        pairs.append((g,cost,a,b))
+        
+        pairs.sort(key=lambda x: x[1])
         
         if not hasattr(analyze,"first"):
             analyze.first=True
-            msg=f"V119 REALITY - Deploy OK!\n"
-            msg+=f"Scanned {len(ms)} -> goals scored {total_goals}\n"
-            msg+=f"CrossCategory {cross} With Volume {with_vol}\n"
-            msg+=f"Over 2.5/3.5 Groups {len(groups)} Pairs {len(pairs)} Valid {len(valid_pairs)}\n"
-            msg+=f"PST {pst.strftime('%m-%d %H:%M')} - Night liquidity 0\n\n"
+            msg=f"V120 FINAL - Deploy OK!\n"
+            msg+=f"Scanned {len(ms)} -> {tot} goals Exp {expired} Cross {cross}\n"
+            msg+=f"Groups {len(groups)} Pairs {len(pairs)} PST {pst.strftime('%m-%d %H:%M')}\n\n"
             if pairs:
-                msg+=f"Sample pairs (no liquidity at night):\n"
-                for g in pairs[:2]:
-                    o25=g["o25"][0]
-                    o35=g["o35"][0]
-                    msg+=f"{g['title'][:40]}\n O2.5 {o25['over']} {o25['source']} vol {o25['vol']} | O3.5 {o35['over']} {o35['source']} vol {o35['vol']}\n\n"
-            msg+=f"Real Single vs games morning 6-8 AM PST only!"
+                msg+=f"LIVE Middle {len(pairs)}:\n"
+                for g,cost,a,b in pairs[:3]:
+                    msg+=f"{g['title'][:42]}\n O2.5 {a['c']}c {a['src']} | O3.5 {b['c']}c Cost {cost}c vol {a['vol']+b['vol']}\n\n"
+            else:
+                msg+=f"No liquid middle now:\n"
+                msg+=f"Today games finished = expired {expired}\n"
+                msg+=f"Tomorrow Real vs games not listed yet\n"
+                msg+=f"Kalshi lists Real Single 12-24h before game\n"
+                msg+=f"Check morning 6-8 AM PST!"
             send(msg)
             return
         
-        if valid_pairs:
-            txt=f"⚽ LIVE MIDDLE 🔥 {len(valid_pairs)} - {pst.strftime('%H:%M PST')}\n"
-            for g in valid_pairs[:4]:
-                a=max(g["o25"], key=lambda x: x["vol"] or 0)
-                b=max(g["o35"], key=lambda x: x["vol"] or 0)
-                cost=a["over"]+(100-b["over"]) if a["over"] and b["over"] else 100
-                txt+=f"{g['title'][:42]}\n O2.5 {a['over']}c ({a['source']}) + U3.5 {100-b['over'] if b['over'] else 50}c Cost {cost}c vol {a['vol']+b['vol']}\n\n"
+        if pairs:
+            txt=f"⚽ MIDDLE LIVE {len(pairs)} - {pst.strftime('%H:%M PST')}\n"
+            for g,cost,a,b in pairs[:4]:
+                txt+=f"{g['title'][:40]}\n O2.5 {a['c']}c + U3.5 {100-b['c']}c Cost {cost}c vol {a['vol']+b['vol']}\n\n"
+            txt+=f"Auto scan 5min"
             send(txt)
         else:
-            if not hasattr(analyze,"last_no") or time.time()-analyze.last_no > 3600:
-                analyze.last_no=time.time()
-                send(f"No liquid middle - {len(ms)} scan -> {total_goals} goals scored, {cross} cross-category, {with_vol} with volume, {len(pairs)} pairs but 0 liquid - Night 11 PM PST = 0 liquidity normal - Real vs games 6-8 AM PST - {pst.strftime('%H:%M')}")
+            if not hasattr(analyze,"ln") or time.time()-analyze.ln>3600:
+                analyze.ln=time.time()
+                send(f"No middle - {len(ms)} scan {tot} goals {len(groups)} groups {len(pairs)} middle - Today expired {expired} - Tomorrow Real vs not listed yet - 6-8 AM PST check - {pst.strftime('%H:%M')}")
 
     except Exception as e:
-        send(f"V119 Error {str(e)[:150]}")
+        send(f"V120 Err {str(e)[:180]}")
 
-def bot_loop():
+def loop():
     time.sleep(3)
-    send(f"V119 REALITY starting - 5000 scan + Volume + Liquidity check - Deploy OK!")
+    send(f"V120 FINAL starting - 5000 scan + Expired filter + Real vs focus - Deploy OK!")
     while True:
         try:
             analyze()
@@ -147,9 +161,9 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V119")
+        self.wfile.write(b"V120")
     def log_message(self,*a):
         pass
 
-threading.Thread(target=bot_loop, daemon=True).start()
+threading.Thread(target=loop, daemon=True).start()
 HTTPServer(("0.0.0.0", PORT), H).serve_forever()
