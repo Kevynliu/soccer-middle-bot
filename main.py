@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 BOT=os.getenv("BOT_TOKEN","").strip()
 CHAT=os.getenv("CHAT_ID","").strip()
 PORT=int(os.getenv("PORT","10000"))
-BASE="https://api.elections.kalshi.com/trade-api/v2"
 
 def send(m):
     try:
@@ -13,155 +12,92 @@ def send(m):
     except:
         pass
 
-def get_markets(total=5000):
-    all_m=[]
-    cur=None
-    for _ in range(5):
-        try:
-            p={"status":"open","limit":1000}
-            if cur:
-                p["cursor"]=cur
-            r=requests.get(f"{BASE}/markets", params=p, timeout=20)
-            if r.status_code==429:
-                time.sleep(6)
-                continue
-            d=r.json()
-            b=d.get("markets",[])
-            if not b:
-                break
-            all_m.extend(b)
-            cur=d.get("cursor")
-            if not cur or len(all_m)>=total:
-                break
-            time.sleep(0.6)
-        except:
-            break
-    return all_m
+# 【entity-ESPN¦canonical_name=ESPN】 leagues - EPL, LaLiga, Serie A, Bundesliga, Ligue1, etc
+LEAGUES=[
+ ("eng.1","EPL"),("esp.1","LaLiga"),("ita.1","Serie A"),
+ ("ger.1","Bundesliga"),("fra.1","Ligue1"),("ned.1","Eredivisie"),
+ ("por.1","Primeira"),("sco.1","Scotland"),("bel.1","Belgium"),
+ ("usa.1","MLS"),("mex.1","Liga MX"),("bra.1","Brasileiro"),
+ ("arg.1","Argentina"),("tur.1","Turkey"),("gre.1","Greece"),
+]
 
-def price(m):
-    for k in ["yes_ask","yes_bid","last_price"]:
-        v=m.get(k)
-        if v not in [None,"",0]:
-            try:
-                fv=float(v)
-                c=int(fv) if fv>1 else int(fv*100)
-                if 0 < c < 100:
-                    return c,k
-            except:
-                pass
-    return None,"None"
+sent=set()
 
-def analyze():
+def check():
     try:
-        ms=get_markets(5000)
-        if not ms:
-            return
         pst=datetime.utcnow()-timedelta(hours=7)
-        now=datetime.utcnow()
-        
-        groups={}
-        tot=0
-        cross=0
-        expired=0
-        
-        for m in ms:
-            # expired filter
-            exp=m.get("close_time") or m.get("expiration_time") or ""
+        hits=[]
+        for lg, lname in LEAGUES:
             try:
-                if exp:
-                    exp_dt=datetime.fromisoformat(exp.replace("Z","+00:00"))
-                    if exp_dt.replace(tzinfo=None) < now - timedelta(hours=1):
-                        expired+=1
+                url=f"https://site.api.espn.com/apis/site/v2/sports/soccer/{lg}/scoreboard"
+                r=requests.get(url, timeout=12)
+                d=r.json()
+                for ev in d.get("events",[]):
+                    try:
+                        comp=ev.get("competitions",[{}])[0]
+                        status=comp.get("status",{})
+                        st=status.get("type",{})
+                        # minute
+                        disp=status.get("displayClock","")
+                        minute=0
+                        try:
+                            minute=int(str(disp).replace("'","").split("+")[0].split("-")[0])
+                        except:
+                            minute=0
+                        state=st.get("state","")
+                        if state!="in":
+                            continue
+                        # 65-70 only
+                        if not (65 <= minute <= 70):
+                            continue
+                        teams=comp.get("competitors",[])
+                        if len(teams)<2:
+                            continue
+                        home=[t for t in teams if t.get("homeAway")=="home"][0]
+                        away=[t for t in teams if t.get("homeAway")=="away"][0]
+                        hs=int(home.get("score",0) or 0)
+                        aws=int(away.get("score",0) or 0)
+                        total=hs+aws
+                        diff=hs-aws
+                        # RULE: total 2 goals + someone winning = 2-0 / 0-2
+                        if total!=2 or diff==0:
+                            continue
+                        hn=home.get("team",{}).get("shortDisplayName","HOME")
+                        an=away.get("team",{}).get("shortDisplayName","AWAY")
+                        leader=hn if diff>0 else an
+                        key=f"{ev.get('id')}_{minute}"
+                        if key in sent:
+                            continue
+                        sent.add(key)
+                        hits.append(f"{lname} {minute}'\n{hn} {hs}-{aws} {an}\nWinner now: {leader} - Total 2 goals\n65-70' Zone!")
+                    except:
                         continue
             except:
-                pass
-            
-            t=(m.get("title","")+" "+m.get("subtitle","")+" "+m.get("yes_sub_title","")).lower()
-            if "goals scored" not in t:
                 continue
-            tot+=1
-            if "crosscategory" in m.get("ticker","").lower():
-                cross+=1
-            
-            # skip hockey garbage
-            if any(x in t for x in ["anaheim","carolina","tampa","edmonton","ottawa","both teams to score"]):
-                continue
-            
-            # soccer only: must have over 2.5 or 3.5
-            if "over 2.5" not in t and "over 3.5" not in t:
-                continue
-            
-            key=m.get("title","")[:50]
-            if key not in groups:
-                groups[key]={"o25":[],"o35":[],"title":m.get("title","")}
-            
-            c,src=price(m)
-            vol=m.get("volume",0) or 0
-            e={"c":c,"src":src,"vol":vol,"tk":m.get("ticker","")[:32]}
-            if "over 2.5" in t:
-                groups[key]["o25"].append(e)
-            else:
-                groups[key]["o35"].append(e)
-        
-        pairs=[]
-        for g in groups.values():
-            if g["o25"] and g["o35"]:
-                a=max(g["o25"], key=lambda x: (x["c"] is not None, x["vol"] or 0))
-                b=max(g["o35"], key=lambda x: (x["c"] is not None, x["vol"] or 0))
-                if a["c"] and b["c"]:
-                    cost=a["c"]+(100-b["c"])
-                    if cost<=125:
-                        pairs.append((g,cost,a,b))
-        
-        pairs.sort(key=lambda x: x[1])
-        
-        if not hasattr(analyze,"first"):
-            analyze.first=True
-            msg=f"V120 FINAL - Deploy OK!\n"
-            msg+=f"Scanned {len(ms)} -> {tot} goals Exp {expired} Cross {cross}\n"
-            msg+=f"Groups {len(groups)} Pairs {len(pairs)} PST {pst.strftime('%m-%d %H:%M')}\n\n"
-            if pairs:
-                msg+=f"LIVE Middle {len(pairs)}:\n"
-                for g,cost,a,b in pairs[:3]:
-                    msg+=f"{g['title'][:42]}\n O2.5 {a['c']}c {a['src']} | O3.5 {b['c']}c Cost {cost}c vol {a['vol']+b['vol']}\n\n"
-            else:
-                msg+=f"No liquid middle now:\n"
-                msg+=f"Today games finished = expired {expired}\n"
-                msg+=f"Tomorrow Real vs games not listed yet\n"
-                msg+=f"Kalshi lists Real Single 12-24h before game\n"
-                msg+=f"Check morning 6-8 AM PST!"
-            send(msg)
-            return
-        
-        if pairs:
-            txt=f"⚽ MIDDLE LIVE {len(pairs)} - {pst.strftime('%H:%M PST')}\n"
-            for g,cost,a,b in pairs[:4]:
-                txt+=f"{g['title'][:40]}\n O2.5 {a['c']}c + U3.5 {100-b['c']}c Cost {cost}c vol {a['vol']+b['vol']}\n\n"
-            txt+=f"Auto scan 5min"
+        if hits:
+            txt=f"⚽ LIVE 65-70' - 2 GOALS + WINNING - {pst.strftime('%H:%M PST')}\n\n" + "\n\n".join(hits[:8])
             send(txt)
-        else:
-            if not hasattr(analyze,"ln") or time.time()-analyze.ln>3600:
-                analyze.ln=time.time()
-                send(f"No middle - {len(ms)} scan {tot} goals {len(groups)} groups {len(pairs)} middle - Today expired {expired} - Tomorrow Real vs not listed yet - 6-8 AM PST check - {pst.strftime('%H:%M')}")
-
+            return len(hits)
+        return 0
     except Exception as e:
-        send(f"V120 Err {str(e)[:180]}")
+        return 0
 
 def loop():
     time.sleep(3)
-    send(f"V120 FINAL starting - 5000 scan + Expired filter + Real vs focus - Deploy OK!")
+    send(f"V200 LIVE 65-70' starting - 2 goals + winning only - Deploy OK!\nCheck every 60 sec - EPL LaLiga Serie A Bundesliga Ligue1 MLS + 10 leagues")
     while True:
         try:
-            analyze()
-            time.sleep(300)
+            n=check()
+            # every 60 sec check - 65-70 window is only 5 min!
+            time.sleep(60)
         except:
-            time.sleep(300)
+            time.sleep(60)
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"V120")
+        self.wfile.write(b"V200")
     def log_message(self,*a):
         pass
 
